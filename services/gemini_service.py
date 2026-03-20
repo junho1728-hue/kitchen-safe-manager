@@ -1,6 +1,6 @@
 """Gemini API 연동 서비스.
 
-명세서 OCR, 라벨 날짜 인식 등을 수행.
+명세서 OCR, 라벨 날짜 인식, 종합 등급 분석 등을 수행.
 SDK: google-genai (새 통합 SDK)
 """
 
@@ -22,6 +22,29 @@ INVOICE_EXTRACTION_PROMPT = """이 거래명세서/송장 이미지에서 모든
 예시 출력:
 ["돼지고기 앞다리", "계란 30구", "두부", "양파"]
 """
+
+COMPREHENSIVE_GRADE_PROMPT = """아래 식자재 품목명 목록을 분석하여 각 제품의 위생 관리 등급을 결정하세요.
+
+등급 기준:
+- A등급 (집중관리): 냉장 보관 필수, 단기 소비기한. 고기류(돼지/소/닭/오리), 수산물(생선/새우/조개/오징어), 계란, 두부, 생유제품(우유/생크림), 신선 가공육
+- B등급 (일반관리): 중간 위험. 가공식품, 소스류, 냉장 보관 조리식품, 냉장 반찬류
+- C등급 (저위험): 냉동 제품(기한이 길어 위급도 낮음), 건조식품, 통조림, 장기 보관 식품
+- exclude (관리제외): 채소류(양파/마늘/감자/당근/배추/무/대파 등 모든 채소)는 무조건 제외
+
+중요: 냉동 제품은 고위험 재료라도 C등급으로 낮춤 (기한이 길어 즉각적 위험 낮음).
+
+입력 품목명 목록:
+{product_names}
+
+반드시 아래 JSON 형식으로만 반환하세요:
+[
+  {{
+    "name": "원본 품목명",
+    "storage": "냉장|냉동|실온",
+    "grade": "A|B|C|exclude",
+    "reason": "한 줄 이유"
+  }}
+]"""
 
 DATE_EXTRACTION_PROMPT = """이 식품 라벨/포장 이미지에서 소비기한 또는 유통기한 날짜를 찾아주세요.
 
@@ -109,3 +132,32 @@ def extract_date_from_label(api_key: str, model: str, image_bytes: bytes) -> str
         ],
     )
     return _parse_date(response.text)
+
+
+def analyze_products_comprehensive(
+    api_key: str, model: str, product_names: list[str]
+) -> list[dict]:
+    """품목명 목록을 AI로 종합 분석하여 A/B/C 등급 반환.
+
+    Returns:
+        [{"name": str, "storage": str, "grade": str, "reason": str}, ...]
+        실패 시 빈 리스트.
+    """
+    if not product_names:
+        return []
+
+    names_text = "\n".join(f"- {name}" for name in product_names)
+    prompt = COMPREHENSIVE_GRADE_PROMPT.format(product_names=names_text)
+
+    client = _create_client(api_key)
+    response = client.models.generate_content(model=model, contents=[prompt])
+
+    text = re.sub(r"```(?:json)?\s*", "", response.text).strip()
+    try:
+        result = json.loads(text)
+        if isinstance(result, list):
+            return result
+    except json.JSONDecodeError:
+        pass
+
+    return []

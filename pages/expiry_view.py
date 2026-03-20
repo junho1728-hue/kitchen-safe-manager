@@ -34,6 +34,14 @@ st.markdown(
     background: #d32f2f; color: #fff; padding: 2px 8px; border-radius: 8px;
     font-size: 0.85rem; font-weight: 700;
 }
+.grade-badge-b {
+    background: #f57c00; color: #fff; padding: 2px 8px; border-radius: 8px;
+    font-size: 0.85rem; font-weight: 700;
+}
+.grade-badge-c {
+    background: #388e3c; color: #fff; padding: 2px 8px; border-radius: 8px;
+    font-size: 0.85rem;
+}
 .grade-badge-normal {
     background: #555; color: #ccc; padding: 2px 8px; border-radius: 8px;
     font-size: 0.85rem;
@@ -133,8 +141,12 @@ else:
             card_class = "card-normal"
             status_text = f"✅ {remaining}일 남음"
 
-        grade_badge = "grade-badge-a" if grade == "A" else "grade-badge-normal"
-        grade_label = "A등급" if grade == "A" else "일반"
+        grade_map = {
+            "A": ("grade-badge-a", "A 집중관리"),
+            "B": ("grade-badge-b", "B 일반관리"),
+            "C": ("grade-badge-c", "C 저위험"),
+        }
+        grade_badge, grade_label = grade_map.get(grade, ("grade-badge-normal", "일반"))
 
         st.markdown(
             f"""

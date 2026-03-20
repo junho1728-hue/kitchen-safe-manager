@@ -1,20 +1,24 @@
 """식자재 입고 등록 페이지: 4단계 상태머신 워크플로.
 
-Step 1 (capture): 명세서 촬영 → Gemini OCR → 품목 리스트 추출
-Step 2 (review_list): 추출 리스트 확인, A등급 자동 분류, 편집
-Step 3 (date_entry): 선택 품목별 날짜 등록 (촬영/직접입력/건너뛰기)
+Step 1 (capture): 명세서 촬영 또는 발주표 불러오기 → 품목 리스트 추출
+Step 2 (review_list): 추출 리스트 확인, AI 종합 등급 분류, 편집
+Step 3 (date_entry): 선택 품목별 날짜 등록 (Snap & Go / 직접입력 / 건너뛰기)
 Step 4 (complete): 라벨 보관 위치 입력 → 저장 완료
 """
 
+import uuid
 import streamlit as st
 from datetime import datetime, date, timedelta
 from services.data_service import (
     load_settings, new_product, save_products_bulk, save_image,
-    record_history, load_history,
+    record_history, load_history, load_preorders, complete_preorder,
 )
 from services.classification import classify_product
-from services.gemini_service import extract_invoice_items, extract_date_from_label
+from services.gemini_service import (
+    extract_invoice_items, extract_date_from_label, analyze_products_comprehensive,
+)
 from services.suggestion import suggest_expiry_days
+from services.background_worker import get_worker
 
 # ── 세션 상태 초기화 ──
 if "reg_step" not in st.session_state:
@@ -29,6 +33,8 @@ if "reg_invoice_path" not in st.session_state:
     st.session_state.reg_invoice_path = None
 if "reg_date_mode" not in st.session_state:
     st.session_state.reg_date_mode = None
+if "reg_snap_task_ids" not in st.session_state:
+    st.session_state.reg_snap_task_ids = {}  # item_name → task_id
 
 
 def reset_workflow():
@@ -39,6 +45,7 @@ def reset_workflow():
     st.session_state.reg_item_idx = 0
     st.session_state.reg_invoice_path = None
     st.session_state.reg_date_mode = None
+    st.session_state.reg_snap_task_ids = {}
 
 
 st.markdown("<p class='page-header'>📋 식자재 입고 등록</p>", unsafe_allow_html=True)
@@ -67,8 +74,39 @@ st.markdown("---")
 # STEP 1: 명세서 촬영
 # ══════════════════════════════════════════════════
 if st.session_state.reg_step == "capture":
-    st.subheader("📸 거래명세서를 촬영하세요")
-    st.caption("명세서/송장을 카메라로 찍으면 AI가 품목을 자동 추출합니다.")
+    st.subheader("📸 거래명세서 촬영 또는 발주표 불러오기")
+
+    # ── 발주표 불러오기 ──
+    today_str = date.today().isoformat()
+    preorders = load_preorders()
+    today_preorders = [
+        p for p in preorders
+        if p["status"] == "pending" and p["expected_intake_date"] == today_str
+    ]
+
+    if today_preorders:
+        st.info(f"📦 오늘 입고 예정 발주표 {len(today_preorders)}건이 있습니다.")
+        if st.button(
+            f"📦 발주표 불러오기 ({len(today_preorders)}건)",
+            use_container_width=True,
+            type="primary",
+            key="load_preorder",
+        ):
+            classified = [
+                {
+                    "name": p["name"],
+                    "grade": p.get("grade", classify_product(p["name"])),
+                    "storage": p.get("storage", "냉장"),
+                    "ai_reason": p.get("ai_reason", ""),
+                    "preorder_id": p["id"],
+                }
+                for p in today_preorders
+            ]
+            st.session_state.reg_items = classified
+            st.session_state.reg_step = "review_list"
+            st.rerun()
+
+        st.markdown("또는 명세서를 직접 촬영하세요:")
 
     if not settings.get("api_key"):
         st.error("⚠️ API Key가 설정되지 않았습니다. 설정 페이지에서 먼저 입력하세요.")
@@ -85,18 +123,35 @@ if st.session_state.reg_step == "capture":
             invoice_path = save_image(image_bytes, "invoices", f"{ts}.jpg")
             st.session_state.reg_invoice_path = invoice_path
 
-            # Gemini OCR
-            with st.spinner("AI가 품목을 추출 중입니다..."):
+            # Gemini OCR + AI 종합 분석
+            with st.spinner("AI가 품목을 추출하고 등급을 분석 중입니다..."):
                 try:
                     items = extract_invoice_items(
                         settings["api_key"], settings["model"], image_bytes
                     )
                     if items:
-                        # 자동 분류 적용
+                        # AI 종합 등급 분석
+                        try:
+                            analyzed = analyze_products_comprehensive(
+                                settings["api_key"], settings["model"], items
+                            )
+                        except Exception:
+                            analyzed = []
+
+                        # AI 결과 매핑 (없으면 키워드 분류 폴백)
+                        ai_map = {a["name"]: a for a in analyzed}
                         classified = []
                         for name in items:
-                            grade = classify_product(name)
-                            classified.append({"name": name, "grade": grade})
+                            ai = ai_map.get(name, {})
+                            grade = ai.get("grade") or classify_product(name)
+                            if grade == "exclude":
+                                continue
+                            classified.append({
+                                "name": name,
+                                "grade": grade,
+                                "storage": ai.get("storage", "냉장"),
+                                "ai_reason": ai.get("reason", ""),
+                            })
                         st.session_state.reg_items = classified
                         st.session_state.reg_step = "review_list"
                         st.rerun()
@@ -113,13 +168,16 @@ elif st.session_state.reg_step == "review_list":
     st.subheader("📝 추출된 품목 확인")
     st.caption("품목명을 수정하고, 날짜 등록할 항목을 선택하세요. A등급은 자동 선택됩니다.")
 
+    GRADE_COLORS = {"A": "#d32f2f", "B": "#f57c00", "C": "#388e3c", "normal": "#555"}
+    GRADE_LABELS = {"A": "A 집중", "B": "B 일반", "C": "C 저위험", "normal": "일반"}
+
     items = st.session_state.reg_items
     updated_items = []
 
     for i, item in enumerate(items):
-        col_check, col_name, col_grade = st.columns([0.5, 3, 1])
+        col_check, col_name, col_grade = st.columns([0.5, 3, 1.2])
         with col_check:
-            default_checked = item["grade"] == "A"
+            default_checked = item["grade"] in ("A", "B")
             checked = st.checkbox(
                 "선택", value=default_checked, key=f"check_{i}", label_visibility="collapsed"
             )
@@ -127,21 +185,29 @@ elif st.session_state.reg_step == "review_list":
             edited_name = st.text_input(
                 "품목명", value=item["name"], key=f"name_{i}", label_visibility="collapsed"
             )
+            ai_reason = item.get("ai_reason", "")
+            if ai_reason:
+                st.caption(f"AI: {ai_reason}")
         with col_grade:
-            # 이름이 변경되면 재분류
-            new_grade = classify_product(edited_name)
-            badge_color = "#d32f2f" if new_grade == "A" else "#555"
-            badge_text = "A등급" if new_grade == "A" else "일반"
+            # 등급 유지 (AI 분석 결과 우선, 이름 변경 시 재분류)
+            existing_grade = item.get("grade", "normal")
+            display_grade = existing_grade if existing_grade in GRADE_COLORS else "normal"
+            color = GRADE_COLORS.get(display_grade, "#555")
+            label = GRADE_LABELS.get(display_grade, display_grade)
+            storage_icon = {"냉장": "🧊", "냉동": "❄️", "실온": "🌡️"}.get(item.get("storage", "냉장"), "")
             st.markdown(
-                f'<span style="background:{badge_color}; color:#fff; padding:4px 10px; '
-                f'border-radius:8px; font-size:0.85rem;">{badge_text}</span>',
+                f'<span style="background:{color}; color:#fff; padding:4px 8px; '
+                f'border-radius:8px; font-size:0.8rem;">{label}</span> {storage_icon}',
                 unsafe_allow_html=True,
             )
 
         updated_items.append({
             "name": edited_name,
-            "grade": new_grade,
+            "grade": existing_grade,
+            "storage": item.get("storage", "냉장"),
+            "ai_reason": item.get("ai_reason", ""),
             "selected": checked,
+            "preorder_id": item.get("preorder_id"),
         })
 
     st.markdown("---")
@@ -244,43 +310,43 @@ elif st.session_state.reg_step == "date_entry":
                 st.rerun()
             st.markdown("</div>", unsafe_allow_html=True)
 
-    # ── 카메라 모드 ──
+    # ── 카메라 모드 (Snap & Go) ──
     elif st.session_state.reg_date_mode == "camera":
-        st.write("라벨의 소비기한을 촬영하세요:")
+        st.write("📸 라벨의 소비기한을 촬영하세요:")
+        st.caption("찍는 즉시 저장되고 다음 품목으로 넘어갑니다. AI 분석은 백그라운드에서 처리됩니다.")
         label_photo = st.camera_input("라벨 촬영", key=f"label_cam_{idx}")
 
         if label_photo is not None:
             label_bytes = label_photo.getvalue()
 
-            # 라벨 사진 저장
+            # ── 즉시 로컬 저장 (Snap!) ──
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            label_path = save_image(label_bytes, "labels", f"{item['name']}_{ts}.jpg")
+            safe_name = item["name"].replace("/", "_").replace(" ", "_")
+            label_filename = f"{safe_name}_{ts}.jpg"
+            label_path = save_image(label_bytes, "labels", label_filename)
             item["label_image"] = label_path
 
-            with st.spinner("AI가 날짜를 인식 중..."):
-                try:
-                    detected_date = extract_date_from_label(
-                        settings["api_key"], settings["model"], label_bytes
-                    )
-                    if detected_date:
-                        st.success(f"인식된 날짜: **{detected_date}**")
-                        item["expiry_date"] = detected_date
-                        item["status"] = "complete"
-                        item["registered_by"] = "auto"
-                    else:
-                        st.warning("날짜를 인식하지 못했습니다. 직접 입력해 주세요.")
-                        st.session_state.reg_date_mode = "manual"
-                        st.rerun()
-                except Exception as e:
-                    st.error(f"AI 오류: {e}")
-                    st.session_state.reg_date_mode = "manual"
-                    st.rerun()
+            # ── 백그라운드 API 분석 큐에 추가 (Go!) ──
+            task_id = str(uuid.uuid4())
+            worker = get_worker()
+            worker.enqueue(
+                task_id=task_id,
+                image_path=label_path,
+                task_type="label_ocr",
+                product_name=item["name"],
+                api_key=settings.get("api_key", ""),
+                model=settings.get("model", ""),
+            )
+            st.session_state.reg_snap_task_ids[item["name"]] = task_id
+            item["status"] = "incomplete"
+            item["registered_by"] = "snap_go"
 
-            if item.get("expiry_date"):
-                if st.button("✅ 확인, 다음으로", use_container_width=True, type="primary", key=f"confirm_cam_{idx}"):
-                    st.session_state.reg_item_idx = idx + 1
-                    st.session_state.reg_date_mode = None
-                    st.rerun()
+            st.success(f"✅ 사진 저장 완료! 백그라운드에서 날짜를 분석합니다.")
+
+            # ── 즉시 다음 품목으로 ──
+            st.session_state.reg_item_idx = idx + 1
+            st.session_state.reg_date_mode = None
+            st.rerun()
 
         if st.button("← 뒤로", key=f"cam_back_{idx}"):
             st.session_state.reg_date_mode = "choose"
@@ -386,6 +452,17 @@ elif st.session_state.reg_step == "complete":
         for p in products_to_save:
             if p["status"] == "complete" and p.get("expiry_date"):
                 record_history(p["name"], p["intake_date"], p["expiry_date"])
+
+        # 발주표 완료 처리
+        for it in all_items:
+            if it.get("preorder_id"):
+                complete_preorder(it["preorder_id"])
+
+        snap_go_count = sum(
+            1 for it in all_items if it.get("registered_by") == "snap_go"
+        )
+        if snap_go_count:
+            st.info(f"⚡ {snap_go_count}건은 Snap & Go로 촬영됨. 홈 화면에서 AI 분석 완료 알림을 확인하세요.")
 
         st.success(f"✅ {len(products_to_save)}건이 등록되었습니다!")
         reset_workflow()

@@ -12,6 +12,7 @@ IMAGES_DIR = BASE_DIR / "images"
 PRODUCTS_FILE = DATA_DIR / "products.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 HISTORY_FILE = DATA_DIR / "history.json"
+PREORDERS_FILE = DATA_DIR / "preorders.json"
 
 
 def _ensure_dirs():
@@ -154,3 +155,78 @@ def save_image(image_bytes: bytes, category: str, filename: str) -> str:
     with open(dest, "wb") as f:
         f.write(image_bytes)
     return str(dest.relative_to(BASE_DIR))
+
+
+# ── Preorders (전날 발주표) ──
+
+
+def load_preorders() -> list[dict]:
+    return _read_json(PREORDERS_FILE)
+
+
+def save_preorders(preorders: list[dict]):
+    _write_json(PREORDERS_FILE, preorders)
+
+
+def add_preorder(
+    name: str,
+    grade: str = "normal",
+    expected_intake_date: str | None = None,
+    storage: str = "냉장",
+    ai_reason: str = "",
+) -> dict:
+    """발주 항목 추가."""
+    now = datetime.now().isoformat(timespec="seconds")
+    preorder = {
+        "id": str(uuid.uuid4()),
+        "name": name,
+        "grade": grade,
+        "storage": storage,
+        "ai_reason": ai_reason,
+        "expected_intake_date": expected_intake_date or (
+            datetime.now().strftime("%Y-%m-%d")
+        ),
+        "status": "pending",
+        "created_at": now,
+    }
+    preorders = load_preorders()
+    preorders.append(preorder)
+    save_preorders(preorders)
+    return preorder
+
+
+def add_preorders_bulk(items: list[dict]) -> list[dict]:
+    """발주 항목 대량 추가."""
+    now = datetime.now().isoformat(timespec="seconds")
+    new_preorders = []
+    for item in items:
+        preorder = {
+            "id": str(uuid.uuid4()),
+            "name": item.get("name", ""),
+            "grade": item.get("grade", "normal"),
+            "storage": item.get("storage", "냉장"),
+            "ai_reason": item.get("ai_reason", ""),
+            "expected_intake_date": item.get("expected_intake_date", ""),
+            "status": "pending",
+            "created_at": now,
+        }
+        new_preorders.append(preorder)
+    preorders = load_preorders()
+    preorders.extend(new_preorders)
+    save_preorders(preorders)
+    return new_preorders
+
+
+def complete_preorder(preorder_id: str):
+    """발주 항목을 완료 처리."""
+    preorders = load_preorders()
+    for p in preorders:
+        if p["id"] == preorder_id:
+            p["status"] = "completed"
+            break
+    save_preorders(preorders)
+
+
+def delete_preorder(preorder_id: str):
+    preorders = load_preorders()
+    save_preorders([p for p in preorders if p["id"] != preorder_id])
