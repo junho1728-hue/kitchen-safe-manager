@@ -54,7 +54,7 @@ st.markdown(
 st.markdown("<p class='page-header'>🔍 소비기한 관리</p>", unsafe_allow_html=True)
 
 if st.button("← 홈으로", key="expiry_back"):
-    st.switch_page("app.py")
+    st.switch_page(st.session_state["_home_pg"])
 
 # ── 필터 ──
 col_search, col_filter = st.columns([2, 1])

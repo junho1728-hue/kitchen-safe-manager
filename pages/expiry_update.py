@@ -12,7 +12,7 @@ from services.suggestion import suggest_expiry_days
 st.markdown("<p class='page-header'>📷 소비기한 업데이트</p>", unsafe_allow_html=True)
 
 if st.button("← 홈으로", key="update_back"):
-    st.switch_page("app.py")
+    st.switch_page(st.session_state["_home_pg"])
 
 settings = load_settings()
 products = load_products()

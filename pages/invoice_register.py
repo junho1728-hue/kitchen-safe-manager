@@ -55,7 +55,7 @@ col_back, col_reset = st.columns([1, 1])
 with col_back:
     if st.button("← 홈으로", key="reg_back"):
         reset_workflow()
-        st.switch_page("app.py")
+        st.switch_page(st.session_state["_home_pg"])
 with col_reset:
     if st.session_state.reg_step != "capture":
         if st.button("🔄 처음부터", key="reg_reset"):
@@ -74,16 +74,14 @@ st.markdown("---")
 # STEP 1: 명세서 촬영
 # ══════════════════════════════════════════════════
 if st.session_state.reg_step == "capture":
-    st.subheader("📸 거래명세서 촬영 또는 발주표 불러오기")
 
-    # ── 발주표 불러오기 ──
+    # ── 발주표 불러오기 (상단 고정) ──
     today_str = date.today().isoformat()
     preorders = load_preorders()
     today_preorders = [
         p for p in preorders
         if p["status"] == "pending" and p["expected_intake_date"] == today_str
     ]
-
     if today_preorders:
         st.info(f"📦 오늘 입고 예정 발주표 {len(today_preorders)}건이 있습니다.")
         if st.button(
@@ -105,60 +103,189 @@ if st.session_state.reg_step == "capture":
             st.session_state.reg_items = classified
             st.session_state.reg_step = "review_list"
             st.rerun()
+        st.markdown("---")
 
-        st.markdown("또는 명세서를 직접 촬영하세요:")
+    # ── 3가지 입력 방법 탭 ──
+    tab_invoice, tab_direct, tab_manual = st.tabs(["📸 명세서 촬영", "📷 제품 직접 촬영", "✏️ 품목명 직접 입력"])
 
-    if not settings.get("api_key"):
-        st.error("⚠️ API Key가 설정되지 않았습니다. 설정 페이지에서 먼저 입력하세요.")
-        if st.button("설정으로 이동"):
-            st.switch_page("pages/settings.py")
-    else:
-        photo = st.camera_input("명세서 촬영", key="invoice_camera")
+    # ─────────────────────────────────
+    # TAB 1: 명세서 촬영 (기존 방식)
+    # ─────────────────────────────────
+    with tab_invoice:
+        st.caption("거래명세서/송장을 촬영하면 AI가 모든 품목을 자동 추출합니다.")
+        if not settings.get("api_key"):
+            st.error("⚠️ API Key가 설정되지 않았습니다.")
+            if st.button("설정으로 이동", key="inv_to_settings"):
+                st.switch_page("pages/settings.py")
+        else:
+            photo = st.camera_input("명세서 촬영", key="invoice_camera")
+            if photo is not None:
+                image_bytes = photo.getvalue()
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                invoice_path = save_image(image_bytes, "invoices", f"{ts}.jpg")
+                st.session_state.reg_invoice_path = invoice_path
 
-        if photo is not None:
-            image_bytes = photo.getvalue()
+                with st.spinner("AI가 품목을 추출하고 등급을 분석 중..."):
+                    try:
+                        items = extract_invoice_items(
+                            settings["api_key"], settings["model"], image_bytes
+                        )
+                        if items:
+                            try:
+                                analyzed = analyze_products_comprehensive(
+                                    settings["api_key"], settings["model"], items
+                                )
+                            except Exception:
+                                analyzed = []
+                            ai_map = {a["name"]: a for a in analyzed}
+                            classified = []
+                            for name in items:
+                                ai = ai_map.get(name, {})
+                                grade = ai.get("grade") or classify_product(name)
+                                if grade == "exclude":
+                                    continue
+                                classified.append({
+                                    "name": name,
+                                    "grade": grade,
+                                    "storage": ai.get("storage", "냉장"),
+                                    "ai_reason": ai.get("reason", ""),
+                                })
+                            st.session_state.reg_items = classified
+                            st.session_state.reg_step = "review_list"
+                            st.rerun()
+                        else:
+                            st.warning("품목을 추출하지 못했습니다. 다시 촬영해 주세요.")
+                    except Exception as e:
+                        st.error(f"AI 오류: {e}")
 
-            # 이미지 저장
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            invoice_path = save_image(image_bytes, "invoices", f"{ts}.jpg")
-            st.session_state.reg_invoice_path = invoice_path
+    # ─────────────────────────────────
+    # TAB 2: 제품 직접 촬영 (라벨/패키지 사진)
+    # ─────────────────────────────────
+    with tab_direct:
+        st.caption("제품 포장지나 라벨을 촬영하면 AI가 제품명과 소비기한을 함께 인식합니다.")
+        if not settings.get("api_key"):
+            st.error("⚠️ API Key가 설정되지 않았습니다.")
+        else:
+            product_photo = st.camera_input("제품 촬영", key="product_direct_camera")
+            if product_photo is not None:
+                image_bytes = product_photo.getvalue()
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                save_image(image_bytes, "invoices", f"direct_{ts}.jpg")
 
-            # Gemini OCR + AI 종합 분석
-            with st.spinner("AI가 품목을 추출하고 등급을 분석 중입니다..."):
-                try:
-                    items = extract_invoice_items(
-                        settings["api_key"], settings["model"], image_bytes
-                    )
-                    if items:
-                        # AI 종합 등급 분석
-                        try:
-                            analyzed = analyze_products_comprehensive(
-                                settings["api_key"], settings["model"], items
-                            )
-                        except Exception:
-                            analyzed = []
+                with st.spinner("AI가 제품 정보를 인식 중..."):
+                    try:
+                        # 제품명 추출
+                        items = extract_invoice_items(
+                            settings["api_key"], settings["model"], image_bytes
+                        )
+                        # 소비기한도 함께 시도
+                        detected_date = extract_date_from_label(
+                            settings["api_key"], settings["model"], image_bytes
+                        )
 
-                        # AI 결과 매핑 (없으면 키워드 분류 폴백)
-                        ai_map = {a["name"]: a for a in analyzed}
-                        classified = []
-                        for name in items:
-                            ai = ai_map.get(name, {})
-                            grade = ai.get("grade") or classify_product(name)
-                            if grade == "exclude":
-                                continue
-                            classified.append({
-                                "name": name,
-                                "grade": grade,
-                                "storage": ai.get("storage", "냉장"),
-                                "ai_reason": ai.get("reason", ""),
-                            })
-                        st.session_state.reg_items = classified
-                        st.session_state.reg_step = "review_list"
-                        st.rerun()
-                    else:
-                        st.warning("품목을 추출하지 못했습니다. 다시 촬영해 주세요.")
-                except Exception as e:
-                    st.error(f"AI 오류: {e}")
+                        if items:
+                            try:
+                                analyzed = analyze_products_comprehensive(
+                                    settings["api_key"], settings["model"], items
+                                )
+                            except Exception:
+                                analyzed = []
+                            ai_map = {a["name"]: a for a in analyzed}
+                            classified = []
+                            for name in items:
+                                ai = ai_map.get(name, {})
+                                grade = ai.get("grade") or classify_product(name)
+                                if grade == "exclude":
+                                    continue
+                                item_data = {
+                                    "name": name,
+                                    "grade": grade,
+                                    "storage": ai.get("storage", "냉장"),
+                                    "ai_reason": ai.get("reason", ""),
+                                }
+                                # 소비기한도 인식됐으면 바로 설정
+                                if detected_date:
+                                    item_data["expiry_date"] = detected_date
+                                    item_data["status"] = "complete"
+                                    item_data["registered_by"] = "auto"
+                                classified.append(item_data)
+
+                            if detected_date:
+                                st.success(f"소비기한 인식: **{detected_date}**")
+
+                            st.session_state.reg_items = classified
+                            st.session_state.reg_step = "review_list"
+                            st.rerun()
+                        else:
+                            st.warning("제품명을 인식하지 못했습니다. 직접 입력 탭을 이용하세요.")
+                    except Exception as e:
+                        st.error(f"AI 오류: {e}")
+
+    # ─────────────────────────────────
+    # TAB 3: 품목명 직접 입력
+    # ─────────────────────────────────
+    with tab_manual:
+        st.caption("제품명을 직접 입력하세요. 한 줄에 하나씩 입력하거나 쉼표로 구분합니다.")
+
+        text_input = st.text_area(
+            "품목 목록",
+            placeholder="돼지고기 앞다리\n계란 30구\n두부\n고등어",
+            height=180,
+            key="manual_text_input",
+        )
+
+        use_ai_grade = st.checkbox(
+            "AI 등급 분석 사용 (API 호출 필요)",
+            value=bool(settings.get("api_key")),
+            key="manual_use_ai",
+        )
+
+        if st.button("다음 →", use_container_width=True, type="primary", key="manual_next"):
+            # 줄 또는 쉼표로 분리
+            raw = text_input.replace(",", "\n").replace("，", "\n")
+            names = [l.strip() for l in raw.split("\n") if l.strip()]
+
+            if not names:
+                st.warning("품목을 입력하세요.")
+            elif use_ai_grade and settings.get("api_key"):
+                with st.spinner("AI가 등급을 분석 중..."):
+                    try:
+                        analyzed = analyze_products_comprehensive(
+                            settings["api_key"], settings["model"], names
+                        )
+                    except Exception:
+                        analyzed = []
+                ai_map = {a["name"]: a for a in analyzed}
+                classified = []
+                for name in names:
+                    ai = ai_map.get(name, {})
+                    grade = ai.get("grade") or classify_product(name)
+                    if grade == "exclude":
+                        continue
+                    classified.append({
+                        "name": name,
+                        "grade": grade,
+                        "storage": ai.get("storage", "냉장"),
+                        "ai_reason": ai.get("reason", ""),
+                    })
+                st.session_state.reg_items = classified
+                st.session_state.reg_step = "review_list"
+                st.rerun()
+            else:
+                # 키워드 분류만 사용
+                classified = []
+                for name in names:
+                    grade = classify_product(name)
+                    if grade != "exclude":
+                        classified.append({
+                            "name": name,
+                            "grade": grade,
+                            "storage": "냉장",
+                            "ai_reason": "",
+                        })
+                st.session_state.reg_items = classified
+                st.session_state.reg_step = "review_list"
+                st.rerun()
 
 
 # ══════════════════════════════════════════════════
@@ -469,4 +596,4 @@ elif st.session_state.reg_step == "complete":
         st.balloons()
 
         if st.button("홈으로 돌아가기", use_container_width=True):
-            st.switch_page("app.py")
+            st.switch_page(st.session_state["_home_pg"])

@@ -6,7 +6,7 @@ from services.data_service import load_settings, save_settings, load_products, I
 st.markdown("<p class='page-header'>⚙️ 설정</p>", unsafe_allow_html=True)
 
 if st.button("← 홈으로", key="settings_back"):
-    st.switch_page("app.py")
+    st.switch_page(st.session_state["_home_pg"])
 
 st.markdown("---")
 

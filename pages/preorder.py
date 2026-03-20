@@ -20,7 +20,7 @@ from services.classification import classify_product
 st.markdown("<p class='page-header'>📦 발주표 미리 등록</p>", unsafe_allow_html=True)
 
 if st.button("← 홈으로", key="pre_back"):
-    st.switch_page("app.py")
+    st.switch_page(st.session_state["_home_pg"])
 
 settings = load_settings()
 st.markdown("---")

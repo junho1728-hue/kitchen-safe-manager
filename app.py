@@ -149,9 +149,14 @@ def home_page():
 
 
 # ── 네비게이션 (사이드바 숨김) ──
+_home_pg = st.Page(home_page, title="홈", default=True)
+
+# 서브페이지에서 홈으로 돌아갈 수 있도록 세션에 저장
+st.session_state["_home_pg"] = _home_pg
+
 pg = st.navigation(
     [
-        st.Page(home_page, title="홈", default=True),
+        _home_pg,
         st.Page("pages/expiry_view.py", title="소비기한 관리"),
         st.Page("pages/invoice_register.py", title="식자재 입고 등록"),
         st.Page("pages/expiry_update.py", title="소비기한 업데이트"),
