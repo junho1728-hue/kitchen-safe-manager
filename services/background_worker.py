@@ -49,6 +49,8 @@ class BackgroundWorker:
         product_name: str = "",
         api_key: str = "",
         model: str = "",
+        label_image_path: str = "",
+        bundle_image_paths: list = None,
     ) -> None:
         """사진을 큐에 추가. 즉시 반환 (블로킹 없음)."""
         task = {
@@ -58,6 +60,8 @@ class BackgroundWorker:
             "product_name": product_name,
             "api_key": api_key,
             "model": model,
+            "label_image_path": label_image_path,
+            "bundle_image_paths": bundle_image_paths or [],
             "enqueued_at": datetime.now().isoformat(timespec="seconds"),
         }
         self._save_to_queue_file(task)
@@ -94,7 +98,10 @@ class BackgroundWorker:
                 self._remove_from_queue_file(task["task_id"])
 
     def _process_task(self, task: dict) -> dict:
-        from services.gemini_service import extract_date_from_label
+        from services.gemini_service import (
+            extract_date_from_label,
+            extract_product_name_from_front,
+        )
 
         image_path = Path(task["image_path"])
         if not image_path.exists():
@@ -102,14 +109,139 @@ class BackgroundWorker:
 
         image_bytes = image_path.read_bytes()
 
+        # ── 기존: 라벨에서 날짜만 추출 ──
         if task["task_type"] == "label_ocr":
             detected_date = extract_date_from_label(
                 task["api_key"], task["model"], image_bytes
             )
+            # 즉시 DB 업데이트
+            if detected_date:
+                from services.data_service import update_product_by_task_id
+                update_product_by_task_id(
+                    task["task_id"],
+                    expiry_date=detected_date,
+                )
             return {
                 "date": detected_date,
                 "product_name": task.get("product_name", ""),
                 "image_path": task["image_path"],
+            }
+
+        # ── 신규: 전면(제품명) + 라벨(날짜) 동시 분석 ──
+        if task["task_type"] == "product_front_label":
+            names = extract_product_name_from_front(
+                task["api_key"], task["model"], image_bytes
+            )
+            product_name = names[0] if names else "인식불가"
+
+            detected_date = None
+            label_path = task.get("label_image_path", "")
+            if label_path:
+                lp = Path(label_path)
+                if lp.exists():
+                    label_bytes = lp.read_bytes()
+                    detected_date = extract_date_from_label(
+                        task["api_key"], task["model"], label_bytes
+                    )
+
+            # 즉시 DB 업데이트
+            from services.data_service import update_product_by_task_id
+            update_product_by_task_id(
+                task["task_id"],
+                name=product_name,
+                expiry_date=detected_date,
+            )
+            return {
+                "product_name": product_name,
+                "date": detected_date,
+                "image_path": task["image_path"],
+                "label_image_path": label_path,
+            }
+
+        # ── 명세서 일괄 처리 (Snap & Go) ──
+        if task["task_type"] == "invoice_batch":
+            from services.gemini_service import extract_invoice_items, analyze_products_comprehensive
+            from services.classification import classify_product
+            from services.data_service import new_product, save_products_bulk
+
+            items = extract_invoice_items(task["api_key"], task["model"], image_bytes)
+            if not items:
+                return {"error": "품목 추출 실패", "count": 0}
+
+            try:
+                analyzed = analyze_products_comprehensive(task["api_key"], task["model"], items)
+            except Exception:
+                analyzed = []
+
+            ai_map = {a["name"]: a for a in analyzed}
+            products = []
+            for name in items:
+                ai = ai_map.get(name, {})
+                grade = ai.get("grade") or classify_product(name)
+                if grade == "exclude":
+                    continue
+                p = new_product(
+                    name=name,
+                    grade=grade,
+                    status="incomplete",
+                    registered_by="invoice_snap",
+                )
+                products.append(p)
+
+            if products:
+                save_products_bulk(products)
+
+            return {"count": len(products), "product_names": [p["name"] for p in products]}
+
+        # ── 신규: 번들 분석 (PIL 보정 백그라운드 처리 + 3필드 추출) ──
+        if task["task_type"] == "product_bundle":
+            from services.gemini_service import verify_and_analyze_bundle
+
+            bundle_paths = task.get("bundle_image_paths") or [task["image_path"]]
+            image_bytes_list = []
+            for bp in bundle_paths:
+                p = Path(bp)
+                if not p.exists():
+                    continue
+                raw = p.read_bytes()
+                # PIL 선명도 보정 (백그라운드에서만 실행)
+                try:
+                    from PIL import Image, ImageFilter, ImageEnhance
+                    import io as _io
+                    img = Image.open(_io.BytesIO(raw))
+                    img = img.filter(ImageFilter.SHARPEN)
+                    img = ImageEnhance.Sharpness(img).enhance(1.8)
+                    buf = _io.BytesIO()
+                    img.save(buf, format="JPEG", quality=92)
+                    image_bytes_list.append(buf.getvalue())
+                except Exception:
+                    image_bytes_list.append(raw)
+
+            if not image_bytes_list:
+                return {"error": "번들 이미지 없음", "product_name": ""}
+
+            result = verify_and_analyze_bundle(
+                task["api_key"], task["model"], image_bytes_list
+            )
+            status = result.get("status", "ok")
+
+            # ok → 즉시 DB 업데이트 (메모리 의존 제거)
+            if status == "ok":
+                from services.data_service import update_product_by_task_id
+                update_product_by_task_id(
+                    task["task_id"],
+                    name=result.get("product_name") or None,
+                    expiry_date=result.get("expiry_date"),
+                    origin=result.get("origin"),
+                )
+
+            return {
+                "status": status,
+                "product_name": result.get("product_name", ""),
+                "date": result.get("expiry_date"),
+                "origin": result.get("origin"),
+                "reason": result.get("reason", ""),
+                "bundle_image_paths": bundle_paths,
             }
 
         return {"error": f"알 수 없는 작업 유형: {task['task_type']}"}

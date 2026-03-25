@@ -4,34 +4,126 @@ import streamlit as st
 from datetime import datetime, date, timedelta
 from services.data_service import (
     load_products, save_product, load_settings, save_image,
-    record_history, load_history,
+    record_history, new_product, save_products_bulk, delete_product,
 )
 from services.gemini_service import extract_date_from_label
-from services.suggestion import suggest_expiry_days
 
+
+# ═══════════════════════════════════════════
+# 헬퍼 함수 (탭 섹션보다 먼저 정의)
+# ═══════════════════════════════════════════
+
+def _do_update(product: dict, new_date: str, label_path: str | None, action: str):
+    """실제 저장 처리 (삭제 or 유지)."""
+    if action == "delete":
+        delete_product(product["id"])
+        new_p = new_product(
+            name=product["name"],
+            grade=product.get("grade", "normal"),
+            intake_date=date.today().isoformat(),
+            expiry_date=new_date,
+            status="complete",
+            label_image=label_path,
+            registered_by="updated",
+            restaurant=product.get("restaurant", ""),
+        )
+        save_products_bulk([new_p])
+    else:  # keep
+        product["expiry_date"] = new_date
+        product["status"] = "complete"
+        product["registered_by"] = "updated"
+        if label_path:
+            product["label_image"] = label_path
+        product["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        save_product(product)
+    record_history(product["name"], product.get("intake_date", date.today().isoformat()), new_date)
+
+
+def _render_action_ui(key_suffix: str, update_action: str) -> str:
+    """update_action 설정에 따라 삭제/유지 라디오를 표시하고 선택값 반환."""
+    if update_action == "ask":
+        action = st.radio(
+            "기존 기록을 어떻게 처리할까요?",
+            options=["keep", "delete"],
+            format_func=lambda x: "✏️ 유지 (날짜만 수정)" if x == "keep" else "🗑️ 삭제 (새 입고로 교체)",
+            horizontal=True,
+            key=f"action_radio_{key_suffix}",
+        )
+        return action
+    return update_action  # "delete" or "keep"
+
+
+# ═══════════════════════════════════════════
+# 페이지 헤더
+# ═══════════════════════════════════════════
+
+st.markdown("<div style='height:2rem'></div>", unsafe_allow_html=True)
 st.markdown("<p class='page-header'>📷 소비기한 업데이트</p>", unsafe_allow_html=True)
 
 if st.button("← 홈으로", key="update_back"):
     st.switch_page(st.session_state["_home_pg"])
 
 settings = load_settings()
-products = load_products()
+update_action = settings.get("update_action", "ask")
+restaurants = settings.get("restaurants", [])
+all_products = load_products()
 
-if not products:
+if not all_products:
     st.info("등록된 품목이 없습니다. 먼저 식자재를 입고 등록하세요.")
     if st.button("📋 입고 등록하러 가기", use_container_width=True):
         st.switch_page("pages/invoice_register.py")
     st.stop()
 
-# ── 탭: 개별 업데이트 / 일괄 업데이트 ──
+# ═══════════════════════════════════════════
+# 코너 필터 버튼
+# ═══════════════════════════════════════════
+if restaurants:
+    st.markdown("**코너 선택**")
+    btn_labels = ["전체"] + restaurants
+    if "update_selected_restaurant" not in st.session_state:
+        st.session_state["update_selected_restaurant"] = "전체"
+
+    cols = st.columns(len(btn_labels))
+    for col, label in zip(cols, btn_labels):
+        selected = st.session_state["update_selected_restaurant"] == label
+        btn_type = "primary" if selected else "secondary"
+        if col.button(label, key=f"upd_rest_{label}", type=btn_type, use_container_width=True):
+            st.session_state["update_selected_restaurant"] = label
+            st.session_state.pop("detected_date", None)
+            st.rerun()
+
+    selected_rest = st.session_state["update_selected_restaurant"]
+    if selected_rest == "전체":
+        products = all_products
+    else:
+        products = [p for p in all_products if p.get("restaurant", "") == selected_rest]
+
+    if not products:
+        st.info(f"'{selected_rest}' 코너에 등록된 품목이 없습니다.")
+        st.stop()
+else:
+    products = all_products
+
+st.markdown("---")
+
+# 업데이트 성공 메시지 (rerun 후 표시)
+if msg := st.session_state.pop("_update_success", None):
+    st.success(msg)
+    st.balloons()
+
+# ═══════════════════════════════════════════
+# 탭: 개별 업데이트 / 미완료 일괄 업데이트
+# ═══════════════════════════════════════════
 tab_single, tab_bulk = st.tabs(["📌 개별 업데이트", "📋 미완료 일괄 업데이트"])
 
 # ═══════════════════════════════════════════
 # TAB 1: 개별 업데이트
 # ═══════════════════════════════════════════
 with tab_single:
-    # 제품 선택
-    product_names = [f"{p['name']} ({'소비기한: ' + p['expiry_date'] if p.get('expiry_date') else '미등록'})" for p in products]
+    product_names = [
+        f"{p['name']} ({'소비기한: ' + p['expiry_date'] if p.get('expiry_date') else '미등록'})"
+        for p in products
+    ]
     selected_idx = st.selectbox(
         "품목 선택", range(len(products)),
         format_func=lambda i: product_names[i],
@@ -41,64 +133,85 @@ with tab_single:
     if selected_idx is not None:
         product = products[selected_idx]
         st.markdown(f"**현재 소비기한:** {product.get('expiry_date', '미등록')}")
-
-        # 자동 추론 제안
-        history = load_history()
-        suggested_days = suggest_expiry_days(product["name"], history)
-        if suggested_days:
-            suggested_date = (date.today() + timedelta(days=suggested_days)).isoformat()
-            st.info(f"💡 이 제품은 보통 입고 후 **{suggested_days}일**입니다.")
-            if st.button("제안 날짜 적용", key="apply_suggest"):
-                product["expiry_date"] = suggested_date
-                product["status"] = "complete"
-                product["registered_by"] = "suggested"
-                product["updated_at"] = datetime.now().isoformat(timespec="seconds")
-                save_product(product)
-                record_history(product["name"], product["intake_date"], suggested_date)
-                st.success(f"✅ {product['name']}의 소비기한이 {suggested_date}로 업데이트되었습니다.")
-                st.rerun()
-
         st.markdown("---")
+
         method = st.radio(
             "업데이트 방법", ["📷 라벨 촬영", "✏️ 직접 입력"],
             horizontal=True, key="update_method",
         )
 
+        # ── 라벨 촬영 ──
         if method == "📷 라벨 촬영":
             if not settings.get("api_key"):
                 st.error("⚠️ API Key가 필요합니다. 설정에서 입력하세요.")
             else:
-                photo = st.camera_input("라벨 촬영", key="update_camera")
-                if photo is not None:
-                    img_bytes = photo.getvalue()
+                label_file = st.file_uploader(
+                    "📷 라벨 사진 찍기 / 업로드",
+                    type=["jpg", "jpeg", "png", "heic", "webp"],
+                    key=f"update_uploader_{selected_idx}",
+                    help="순정 카메라 앱 또는 사진첩에서 선택",
+                )
 
-                    # 이미지 저장
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    label_path = save_image(img_bytes, "labels", f"{product['name']}_{ts}.jpg")
+                if label_file is not None:
+                    raw_bytes = label_file.read()
+                    try:
+                        from PIL import Image, ImageFilter, ImageEnhance
+                        import io as _io
+                        img = Image.open(_io.BytesIO(raw_bytes))
+                        img = img.filter(ImageFilter.SHARPEN)
+                        img = ImageEnhance.Sharpness(img).enhance(1.8)
+                        buf = _io.BytesIO()
+                        img.save(buf, format="JPEG", quality=92)
+                        img_bytes = buf.getvalue()
+                    except Exception:
+                        img_bytes = raw_bytes
 
-                    with st.spinner("AI가 날짜를 인식 중..."):
+                    st.image(img_bytes, width='stretch',
+                             caption="업로드된 라벨 — 날짜가 잘 보이면 분석 시작")
+                    st.markdown("---")
+
+                    if st.button("🔍 날짜 인식 시작", use_container_width=True,
+                                 type="primary", key="start_ocr"):
+                        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        label_path = save_image(
+                            img_bytes, "labels", f"{product['name']}_{ts}.jpg"
+                        )
+                        with st.spinner("AI가 날짜를 인식 중..."):
+                            try:
+                                detected = extract_date_from_label(
+                                    settings["api_key"], settings["model"], img_bytes
+                                )
+                            except Exception as e:
+                                detected = None
+                                st.error(f"AI 오류: {e}")
+
+                        if detected:
+                            st.session_state["detected_date"] = detected
+                            st.session_state["detected_label_path"] = label_path
+                        else:
+                            st.session_state.pop("detected_date", None)
+                            st.warning("날짜를 인식하지 못했습니다. 더 선명하게 다시 찍어주세요.")
+
+                # ── OCR 결과 표시 (spinner 밖) ──
+                if st.session_state.get("detected_date"):
+                    detected = st.session_state["detected_date"]
+                    label_path = st.session_state.get("detected_label_path")
+                    st.success(f"✅ 인식된 날짜: **{detected}**")
+                    chosen_action = _render_action_ui("ocr", update_action)
+                    if st.button("✅ 이 날짜로 업데이트", type="primary",
+                                 use_container_width=True, key="confirm_ocr"):
                         try:
-                            detected = extract_date_from_label(
-                                settings["api_key"], settings["model"], img_bytes
-                            )
-                            if detected:
-                                st.success(f"인식된 날짜: **{detected}**")
-                                if st.button("✅ 이 날짜로 업데이트", type="primary", key="confirm_ocr"):
-                                    product["expiry_date"] = detected
-                                    product["status"] = "complete"
-                                    product["registered_by"] = "auto"
-                                    product["label_image"] = label_path
-                                    product["updated_at"] = datetime.now().isoformat(timespec="seconds")
-                                    save_product(product)
-                                    record_history(product["name"], product["intake_date"], detected)
-                                    st.success("업데이트 완료!")
-                                    st.rerun()
-                            else:
-                                st.warning("날짜를 인식하지 못했습니다. 직접 입력해 주세요.")
+                            _do_update(product, detected, label_path, chosen_action)
                         except Exception as e:
-                            st.error(f"AI 오류: {e}")
+                            st.error(f"저장 오류: {e}")
+                        else:
+                            st.session_state.pop("detected_date", None)
+                            st.session_state.pop("detected_label_path", None)
+                            st.session_state["_update_success"] = f"✅ {product['name']} 업데이트 완료!"
+                            st.rerun()
 
-        else:  # 직접 입력
+        # ── 직접 입력 ──
+        else:
             current = None
             if product.get("expiry_date"):
                 try:
@@ -111,16 +224,16 @@ with tab_single:
                 value=current or (date.today() + timedelta(days=7)),
                 key="update_date_input",
             )
-
-            if st.button("✅ 업데이트", use_container_width=True, type="primary", key="save_manual_update"):
-                product["expiry_date"] = new_date.isoformat()
-                product["status"] = "complete"
-                product["registered_by"] = "manual"
-                product["updated_at"] = datetime.now().isoformat(timespec="seconds")
-                save_product(product)
-                record_history(product["name"], product["intake_date"], new_date.isoformat())
-                st.success(f"✅ {product['name']}의 소비기한이 {new_date}로 업데이트되었습니다.")
-                st.rerun()
+            chosen_action = _render_action_ui("manual", update_action)
+            if st.button("✅ 업데이트", use_container_width=True,
+                         type="primary", key="save_manual_update"):
+                try:
+                    _do_update(product, new_date.isoformat(), None, chosen_action)
+                except Exception as e:
+                    st.error(f"저장 오류: {e}")
+                else:
+                    st.session_state["_update_success"] = f"✅ {product['name']} → {new_date} 업데이트 완료!"
+                    st.rerun()
 
 # ═══════════════════════════════════════════
 # TAB 2: 미완료 일괄 업데이트
@@ -137,15 +250,11 @@ with tab_bulk:
         for i, p in enumerate(incomplete):
             with st.container(border=True):
                 grade_text = "🔴 A등급" if p.get("grade") == "A" else ""
-                st.markdown(f"**{p['name']}** {grade_text}")
+                rest_text = f" | 🏷️ {p['restaurant']}" if p.get("restaurant") else ""
+                st.markdown(f"**{p['name']}** {grade_text}{rest_text}")
                 st.caption(f"입고일: {p.get('intake_date', '-')}")
 
-                # 자동 추론
-                suggested_days = suggest_expiry_days(p["name"], history)
-                default_date = date.today() + timedelta(days=suggested_days or 7)
-                if suggested_days:
-                    st.caption(f"💡 추천: 입고 후 {suggested_days}일")
-
+                default_date = date.today() + timedelta(days=7)
                 col_date, col_save = st.columns([3, 1])
                 with col_date:
                     new_exp = st.date_input(
@@ -156,11 +265,6 @@ with tab_bulk:
                     )
                 with col_save:
                     if st.button("저장", key=f"bulk_save_{p['id']}", use_container_width=True):
-                        p["expiry_date"] = new_exp.isoformat()
-                        p["status"] = "complete"
-                        p["registered_by"] = "manual"
-                        p["updated_at"] = datetime.now().isoformat(timespec="seconds")
-                        save_product(p)
-                        record_history(p["name"], p["intake_date"], new_exp.isoformat())
+                        _do_update(p, new_exp.isoformat(), None, update_action if update_action != "ask" else "keep")
                         st.success(f"✅ {p['name']} 저장 완료")
                         st.rerun()

@@ -89,6 +89,9 @@ def new_product(
     label_image: str | None = None,
     binder_location: str | None = None,
     registered_by: str = "manual",
+    task_id: str | None = None,
+    origin: str | None = None,
+    restaurant: str = "",
 ) -> dict:
     """새 제품 딕셔너리 생성."""
     now = datetime.now().isoformat(timespec="seconds")
@@ -99,20 +102,55 @@ def new_product(
         "intake_date": intake_date or datetime.now().strftime("%Y-%m-%d"),
         "expiry_date": expiry_date,
         "status": status,
+        "origin": origin,
+        "restaurant": restaurant,
         "invoice_image": invoice_image,
         "label_image": label_image,
         "binder_location": binder_location,
         "registered_by": registered_by,
+        "task_id": task_id,
         "created_at": now,
         "updated_at": now,
     }
+
+
+def update_product_by_task_id(
+    task_id: str,
+    name: str | None = None,
+    expiry_date: str | None = None,
+    origin: str | None = None,
+) -> str | None:
+    """task_id로 제품을 찾아 이름·소비기한 자동 업데이트.
+
+    Returns:
+        업데이트된 제품의 name (이력 기록용). 없으면 None.
+    """
+    products = load_products()
+    for p in products:
+        if p.get("task_id") == task_id:
+            if name and not name.startswith("분석중_"):
+                p["name"] = name
+            if expiry_date:
+                p["expiry_date"] = expiry_date
+                p["status"] = "complete"
+            if origin:
+                p["origin"] = origin
+            p["updated_at"] = datetime.now().isoformat(timespec="seconds")
+            save_products(products)
+            return p["name"]
+    return None
 
 
 # ── Settings ──
 
 
 def load_settings() -> dict:
-    defaults = {"api_key": "", "model": "gemini-2.5-flash-lite"}
+    defaults = {
+        "api_key": "",
+        "model": "gemini-2.5-flash-lite",
+        "restaurants": [],
+        "update_action": "ask",  # "ask" | "delete" | "keep"
+    }
     stored = _read_json(SETTINGS_FILE)
     if isinstance(stored, dict):
         defaults.update(stored)
@@ -207,6 +245,7 @@ def add_preorders_bulk(items: list[dict]) -> list[dict]:
             "storage": item.get("storage", "냉장"),
             "ai_reason": item.get("ai_reason", ""),
             "expected_intake_date": item.get("expected_intake_date", ""),
+            "restaurant": item.get("restaurant", ""),
             "status": "pending",
             "created_at": now,
         }

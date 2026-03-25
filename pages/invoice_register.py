@@ -1,9 +1,8 @@
-"""식자재 입고 등록 페이지: 4단계 상태머신 워크플로.
+"""식자재 입고 등록 페이지: 2단계 워크플로 (Snap & Go).
 
-Step 1 (capture): 명세서 촬영 또는 발주표 불러오기 → 품목 리스트 추출
-Step 2 (review_list): 추출 리스트 확인, AI 종합 등급 분류, 편집
-Step 3 (date_entry): 선택 품목별 날짜 등록 (Snap & Go / 직접입력 / 건너뛰기)
-Step 4 (complete): 라벨 보관 위치 입력 → 저장 완료
+Step 1 (capture): 명세서 촬영/업로드 또는 직접 입력 → 품목 리스트 추출
+Step 2 (review_list): 리스트 확인 → 즉시 DB 저장 → 홈 이동
+(날짜 등록 단계 제거 — 소비기한은 백그라운드 AI가 자동 업데이트)
 """
 
 import uuid
@@ -35,6 +34,17 @@ if "reg_date_mode" not in st.session_state:
     st.session_state.reg_date_mode = None
 if "reg_snap_task_ids" not in st.session_state:
     st.session_state.reg_snap_task_ids = {}  # item_name → task_id
+# ── 제품 묶음 촬영 상태 ──
+if "bundle_step" not in st.session_state:
+    st.session_state.bundle_step = "start"      # "start" | "capturing"
+if "bundle_photos" not in st.session_state:
+    st.session_state.bundle_photos = []         # 현재 제품의 bytes 리스트
+if "direct_items_done" not in st.session_state:
+    st.session_state.direct_items_done = []     # 저장 완료된 묶음 목록
+if "invoice_snap_step" not in st.session_state:
+    st.session_state.invoice_snap_step = "ready"  # "ready" | "done"
+if "invoice_snap_count" not in st.session_state:
+    st.session_state.invoice_snap_count = 0
 
 
 def reset_workflow():
@@ -46,8 +56,14 @@ def reset_workflow():
     st.session_state.reg_invoice_path = None
     st.session_state.reg_date_mode = None
     st.session_state.reg_snap_task_ids = {}
+    st.session_state.bundle_step = "start"
+    st.session_state.bundle_photos = []
+    st.session_state.direct_items_done = []
+    st.session_state.invoice_snap_step = "ready"
+    st.session_state.invoice_snap_count = 0
 
 
+st.markdown("<div style='height:2rem'></div>", unsafe_allow_html=True)
 st.markdown("<p class='page-header'>📋 식자재 입고 등록</p>", unsafe_allow_html=True)
 
 # 홈/초기화 버튼
@@ -112,114 +128,172 @@ if st.session_state.reg_step == "capture":
     # TAB 1: 명세서 촬영 (기존 방식)
     # ─────────────────────────────────
     with tab_invoice:
-        st.caption("거래명세서/송장을 촬영하면 AI가 모든 품목을 자동 추출합니다.")
         if not settings.get("api_key"):
             st.error("⚠️ API Key가 설정되지 않았습니다.")
             if st.button("설정으로 이동", key="inv_to_settings"):
                 st.switch_page("pages/settings.py")
         else:
-            photo = st.camera_input("명세서 촬영", key="invoice_camera")
-            if photo is not None:
-                image_bytes = photo.getvalue()
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                invoice_path = save_image(image_bytes, "invoices", f"{ts}.jpg")
-                st.session_state.reg_invoice_path = invoice_path
+            isnap = st.session_state.invoice_snap_step
 
-                with st.spinner("AI가 품목을 추출하고 등급을 분석 중..."):
-                    try:
-                        items = extract_invoice_items(
-                            settings["api_key"], settings["model"], image_bytes
+            # ── 완료 화면 ──
+            if isnap == "done":
+                st.success(f"✅ 명세서 {st.session_state.invoice_snap_count}건 접수 완료! AI가 품목을 자동 등록 중입니다.")
+                st.caption("분석이 끝나면 소비기한 관리 화면에 자동으로 반영됩니다.")
+                st.markdown("---")
+                col_next, col_home = st.columns(2)
+                with col_next:
+                    if st.button("📸 다음 명세서\n등록하기", use_container_width=True,
+                                 type="primary", key="inv_next"):
+                        st.session_state.invoice_snap_step = "ready"
+                        st.rerun()
+                with col_home:
+                    if st.button("🏠 홈으로\n나가기", use_container_width=True,
+                                 key="inv_go_home"):
+                        reset_workflow()
+                        st.switch_page(st.session_state["_home_pg"])
+
+            # ── 업로드 화면 ──
+            else:
+                st.caption("📄 거래명세서·납품서 전용 — 제품 사진은 [제품 직접 촬영] 탭 이용")
+                uploader_key = f"invoice_uploader_{st.session_state.invoice_snap_count}"
+                invoice_file = st.file_uploader(
+                    "📸 명세서 사진 찍기 / 업로드",
+                    type=["jpg", "jpeg", "png", "heic", "webp"],
+                    key=uploader_key,
+                )
+                if invoice_file is not None:
+                    image_bytes = invoice_file.read()
+                    st.image(image_bytes, width='stretch',
+                             caption="명세서가 잘 보이면 아래 버튼을 누르세요")
+                    st.markdown("---")
+                    if st.button("⚡ 즉시 등록 (Snap & Go)", use_container_width=True,
+                                 type="primary", key="inv_snap_go"):
+                        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        invoice_path = save_image(image_bytes, "invoices", f"inv_{ts}.jpg")
+                        task_id = str(uuid.uuid4())
+                        worker = get_worker()
+                        worker.enqueue(
+                            task_id=task_id,
+                            image_path=invoice_path,
+                            task_type="invoice_batch",
+                            api_key=settings.get("api_key", ""),
+                            model=settings.get("model", ""),
                         )
-                        if items:
-                            try:
-                                analyzed = analyze_products_comprehensive(
-                                    settings["api_key"], settings["model"], items
-                                )
-                            except Exception:
-                                analyzed = []
-                            ai_map = {a["name"]: a for a in analyzed}
-                            classified = []
-                            for name in items:
-                                ai = ai_map.get(name, {})
-                                grade = ai.get("grade") or classify_product(name)
-                                if grade == "exclude":
-                                    continue
-                                classified.append({
-                                    "name": name,
-                                    "grade": grade,
-                                    "storage": ai.get("storage", "냉장"),
-                                    "ai_reason": ai.get("reason", ""),
-                                })
-                            st.session_state.reg_items = classified
-                            st.session_state.reg_step = "review_list"
-                            st.rerun()
-                        else:
-                            st.warning("품목을 추출하지 못했습니다. 다시 촬영해 주세요.")
-                    except Exception as e:
-                        st.error(f"AI 오류: {e}")
+                        st.session_state.invoice_snap_count += 1
+                        st.session_state.invoice_snap_step = "done"
+                        st.rerun()
 
     # ─────────────────────────────────
-    # TAB 2: 제품 직접 촬영 (라벨/패키지 사진)
+    # TAB 2: 제품 묶음 업로드 (여러 장 → 하나의 제품으로 분석)
     # ─────────────────────────────────
     with tab_direct:
-        st.caption("제품 포장지나 라벨을 촬영하면 AI가 제품명과 소비기한을 함께 인식합니다.")
         if not settings.get("api_key"):
             st.error("⚠️ API Key가 설정되지 않았습니다.")
         else:
-            product_photo = st.camera_input("제품 촬영", key="product_direct_camera")
-            if product_photo is not None:
-                image_bytes = product_photo.getvalue()
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                save_image(image_bytes, "invoices", f"direct_{ts}.jpg")
+            bs = st.session_state.bundle_step
+            done_items = st.session_state.direct_items_done
 
-                with st.spinner("AI가 제품 정보를 인식 중..."):
-                    try:
-                        # 제품명 추출
-                        items = extract_invoice_items(
-                            settings["api_key"], settings["model"], image_bytes
+            if done_items:
+                st.info(f"📦 저장 완료: **{len(done_items)}개 제품** (AI 백그라운드 분석 중)")
+
+            # ── 업로드 / 미리보기 화면 ──
+            if bs in ("start", "capturing"):
+                st.markdown("#### 📷 제품 사진 올리기")
+                st.caption("전면·라벨·옆면 등 여러 장을 한꺼번에 선택하세요. 순정 카메라 앱이 열립니다.")
+
+                # 제출마다 key가 바뀌어 uploader 초기화
+                uploader_key = f"bundle_uploader_{len(done_items)}"
+                uploaded_files = st.file_uploader(
+                    "📷 사진 찍기 / 사진첩에서 선택",
+                    type=["jpg", "jpeg", "png", "heic", "webp"],
+                    accept_multiple_files=True,
+                    key=uploader_key,
+                    help="iOS: '사진 찍기' 또는 '사진 보관함'  |  Android: '카메라' 또는 '갤러리'",
+                )
+
+                if uploaded_files:
+                    st.markdown(f"**{len(uploaded_files)}장 선택됨 — 미리보기 확인 후 분석 시작**")
+                    # 전체 너비 미리보기
+                    for i, f in enumerate(uploaded_files):
+                        img_bytes = f.read()
+                        st.image(img_bytes, width='stretch',
+                                 caption=f"사진 {i+1} / {len(uploaded_files)}")
+                    st.markdown("---")
+                    if st.button("⚡ 등록", use_container_width=True,
+                                 type="primary", key="bundle_analyze"):
+                        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        saved_paths = []
+                        for i, f in enumerate(uploaded_files):
+                            f.seek(0)
+                            # 원본 바이트 즉시 저장 (PIL 보정은 백그라운드에서 처리)
+                            raw_bytes = f.read()
+                            path = save_image(raw_bytes, "invoices", f"bundle_{ts}_{i}.jpg")
+                            saved_paths.append(path)
+
+                        # 백그라운드 큐 등록 (Snap & Go!)
+                        task_id = str(uuid.uuid4())
+                        worker = get_worker()
+                        worker.enqueue(
+                            task_id=task_id,
+                            image_path=saved_paths[0],
+                            task_type="product_bundle",
+                            product_name="",
+                            api_key=settings.get("api_key", ""),
+                            model=settings.get("model", ""),
+                            bundle_image_paths=saved_paths,
                         )
-                        # 소비기한도 함께 시도
-                        detected_date = extract_date_from_label(
-                            settings["api_key"], settings["model"], image_bytes
+
+                        # DB에 즉시 저장 (placeholder — AI가 나중에 이름/날짜 업데이트)
+                        p = new_product(
+                            name=f"분석중_{ts}",
+                            grade="B",
+                            intake_date=date.today().isoformat(),
+                            expiry_date=None,
+                            status="incomplete",
+                            label_image=saved_paths[-1],
+                            registered_by="snap_go",
+                            task_id=task_id,
                         )
+                        save_products_bulk([p])
 
-                        if items:
-                            try:
-                                analyzed = analyze_products_comprehensive(
-                                    settings["api_key"], settings["model"], items
-                                )
-                            except Exception:
-                                analyzed = []
-                            ai_map = {a["name"]: a for a in analyzed}
-                            classified = []
-                            for name in items:
-                                ai = ai_map.get(name, {})
-                                grade = ai.get("grade") or classify_product(name)
-                                if grade == "exclude":
-                                    continue
-                                item_data = {
-                                    "name": name,
-                                    "grade": grade,
-                                    "storage": ai.get("storage", "냉장"),
-                                    "ai_reason": ai.get("reason", ""),
-                                }
-                                # 소비기한도 인식됐으면 바로 설정
-                                if detected_date:
-                                    item_data["expiry_date"] = detected_date
-                                    item_data["status"] = "complete"
-                                    item_data["registered_by"] = "auto"
-                                classified.append(item_data)
+                        st.session_state.reg_snap_task_ids[f"bundle_{ts}"] = task_id
+                        st.session_state.direct_items_done.append({
+                            "paths": saved_paths,
+                            "task_id": task_id,
+                            "ts": ts,
+                            "photo_count": len(saved_paths),
+                        })
+                        st.session_state.bundle_photos = []
+                        st.session_state.bundle_step = "next_action"
+                        st.rerun()
 
-                            if detected_date:
-                                st.success(f"소비기한 인식: **{detected_date}**")
-
-                            st.session_state.reg_items = classified
-                            st.session_state.reg_step = "review_list"
-                            st.rerun()
-                        else:
-                            st.warning("제품명을 인식하지 못했습니다. 직접 입력 탭을 이용하세요.")
-                    except Exception as e:
-                        st.error(f"AI 오류: {e}")
+            # ── 제품 등록 완료 → 다음 선택 ──
+            elif bs == "next_action":
+                total = len(done_items)
+                last = done_items[-1]
+                st.success(
+                    f"✅ {total}번째 제품 저장! ({last['photo_count']}장 — AI가 제품명·날짜 분석 중)"
+                )
+                st.caption("분석 완료 시 홈 화면에 알림이 표시됩니다.")
+                st.markdown("---")
+                col_next, col_home = st.columns(2)
+                with col_next:
+                    st.markdown('<div class="big-button btn-register">', unsafe_allow_html=True)
+                    if st.button("📷 다음 제품\n등록하기", use_container_width=True,
+                                 type="primary", key="next_product"):
+                        st.session_state.bundle_step = "start"
+                        st.rerun()
+                    st.markdown("</div>", unsafe_allow_html=True)
+                with col_home:
+                    st.markdown('<div class="big-button btn-expiry">', unsafe_allow_html=True)
+                    if st.button("🏠 홈으로\n나가기", use_container_width=True,
+                                 key="bundle_go_home"):
+                        st.session_state.bundle_step = "start"
+                        st.session_state.bundle_photos = []
+                        st.session_state.direct_items_done = []
+                        reset_workflow()
+                        st.switch_page(st.session_state["_home_pg"])
+                    st.markdown("</div>", unsafe_allow_html=True)
 
     # ─────────────────────────────────
     # TAB 3: 품목명 직접 입력
@@ -339,261 +413,33 @@ elif st.session_state.reg_step == "review_list":
 
     st.markdown("---")
 
-    col_count, col_next = st.columns([2, 1])
-    with col_count:
-        selected_count = sum(1 for it in updated_items if it["selected"])
-        st.write(f"**{selected_count}개** 항목이 선택됨 (날짜 등록 대상)")
-    with col_next:
-        if st.button("다음 →", use_container_width=True, type="primary"):
-            # 선택된 항목과 비선택 항목 모두 저장
-            st.session_state.reg_items = updated_items
-            st.session_state.reg_selected = [
-                it for it in updated_items if it["selected"]
-            ]
-            st.session_state.reg_item_idx = 0
-            st.session_state.reg_date_mode = None
-
-            if selected_count > 0:
-                st.session_state.reg_step = "date_entry"
-            else:
-                st.session_state.reg_step = "complete"
-            st.rerun()
-
-
-# ══════════════════════════════════════════════════
-# STEP 3: 날짜 등록
-# ══════════════════════════════════════════════════
-elif st.session_state.reg_step == "date_entry":
-    selected = st.session_state.reg_selected
-    idx = st.session_state.reg_item_idx
-
-    if idx >= len(selected):
-        st.session_state.reg_step = "complete"
-        st.rerun()
-
-    item = selected[idx]
-    st.subheader(f"📅 날짜 등록 ({idx + 1}/{len(selected)})")
-
-    grade_badge = "🔴 A등급" if item["grade"] == "A" else "일반"
-    st.markdown(
-        f"### {item['name']} {grade_badge}",
-    )
-
-    # ── 자동 추론 제안 ──
-    history = load_history()
-    suggested_days = suggest_expiry_days(item["name"], history)
-    suggested_date = None
-    if suggested_days:
-        suggested_date = (date.today() + timedelta(days=suggested_days)).isoformat()
-        st.info(f"💡 이 제품은 보통 입고 후 **{suggested_days}일**입니다. 맞습니까?")
-        col_yes, col_no = st.columns(2)
-        with col_yes:
-            if st.button("✅ 맞습니다", use_container_width=True, key=f"suggest_yes_{idx}"):
-                item["expiry_date"] = suggested_date
-                item["status"] = "complete"
-                item["registered_by"] = "suggested"
-                st.session_state.reg_item_idx = idx + 1
-                st.session_state.reg_date_mode = None
-                st.rerun()
-        with col_no:
-            if st.button("✏️ 직접 입력할게요", use_container_width=True, key=f"suggest_no_{idx}"):
-                st.session_state.reg_date_mode = "choose"
-                st.rerun()
-        # 제안을 수락/거절하지 않은 상태면 아래 옵션 숨김
-        if st.session_state.reg_date_mode is None:
-            st.stop()
-
-    # ── 날짜 입력 방법 선택 ──
-    if st.session_state.reg_date_mode is None:
-        st.session_state.reg_date_mode = "choose"
-
-    if st.session_state.reg_date_mode == "choose":
-        st.write("날짜 등록 방법을 선택하세요:")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.markdown(
-                '<div class="big-button">', unsafe_allow_html=True
+    if st.button("✅ 저장하고 완료", use_container_width=True, type="primary"):
+        today_str = date.today().isoformat()
+        products_to_save = []
+        for it in updated_items:
+            p = new_product(
+                name=it["name"],
+                grade=it["grade"],
+                intake_date=today_str,
+                expiry_date=None,
+                status="incomplete",
+                invoice_image=st.session_state.reg_invoice_path,
+                registered_by="invoice",
             )
-            if st.button("📷 촬영", use_container_width=True, key=f"mode_cam_{idx}"):
-                st.session_state.reg_date_mode = "camera"
-                st.rerun()
-            st.markdown("</div>", unsafe_allow_html=True)
-        with col2:
-            st.markdown(
-                '<div class="big-button">', unsafe_allow_html=True
-            )
-            if st.button("✏️ 직접 입력", use_container_width=True, key=f"mode_manual_{idx}"):
-                st.session_state.reg_date_mode = "manual"
-                st.rerun()
-            st.markdown("</div>", unsafe_allow_html=True)
-        with col3:
-            st.markdown(
-                '<div class="big-button">', unsafe_allow_html=True
-            )
-            if st.button("⏭️ 건너뛰기", use_container_width=True, key=f"mode_skip_{idx}"):
-                item["status"] = "incomplete"
-                st.session_state.reg_item_idx = idx + 1
-                st.session_state.reg_date_mode = None
-                st.rerun()
-            st.markdown("</div>", unsafe_allow_html=True)
-
-    # ── 카메라 모드 (Snap & Go) ──
-    elif st.session_state.reg_date_mode == "camera":
-        st.write("📸 라벨의 소비기한을 촬영하세요:")
-        st.caption("찍는 즉시 저장되고 다음 품목으로 넘어갑니다. AI 분석은 백그라운드에서 처리됩니다.")
-        label_photo = st.camera_input("라벨 촬영", key=f"label_cam_{idx}")
-
-        if label_photo is not None:
-            label_bytes = label_photo.getvalue()
-
-            # ── 즉시 로컬 저장 (Snap!) ──
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            safe_name = item["name"].replace("/", "_").replace(" ", "_")
-            label_filename = f"{safe_name}_{ts}.jpg"
-            label_path = save_image(label_bytes, "labels", label_filename)
-            item["label_image"] = label_path
-
-            # ── 백그라운드 API 분석 큐에 추가 (Go!) ──
-            task_id = str(uuid.uuid4())
-            worker = get_worker()
-            worker.enqueue(
-                task_id=task_id,
-                image_path=label_path,
-                task_type="label_ocr",
-                product_name=item["name"],
-                api_key=settings.get("api_key", ""),
-                model=settings.get("model", ""),
-            )
-            st.session_state.reg_snap_task_ids[item["name"]] = task_id
-            item["status"] = "incomplete"
-            item["registered_by"] = "snap_go"
-
-            st.success(f"✅ 사진 저장 완료! 백그라운드에서 날짜를 분석합니다.")
-
-            # ── 즉시 다음 품목으로 ──
-            st.session_state.reg_item_idx = idx + 1
-            st.session_state.reg_date_mode = None
-            st.rerun()
-
-        if st.button("← 뒤로", key=f"cam_back_{idx}"):
-            st.session_state.reg_date_mode = "choose"
-            st.rerun()
-
-    # ── 직접 입력 모드 ──
-    elif st.session_state.reg_date_mode == "manual":
-        st.write("소비기한을 직접 입력하세요:")
-        default_date = date.today() + timedelta(days=suggested_days or 7)
-        expiry_input = st.date_input(
-            "소비기한",
-            value=default_date,
-            min_value=date.today(),
-            key=f"date_input_{idx}",
-        )
-
-        if st.button("✅ 저장", use_container_width=True, type="primary", key=f"save_manual_{idx}"):
-            item["expiry_date"] = expiry_input.isoformat()
-            item["status"] = "complete"
-            item["registered_by"] = "manual"
-            st.session_state.reg_item_idx = idx + 1
-            st.session_state.reg_date_mode = None
-            st.rerun()
-
-        if st.button("← 뒤로", key=f"manual_back_{idx}"):
-            st.session_state.reg_date_mode = "choose"
-            st.rerun()
-
-
-# ══════════════════════════════════════════════════
-# STEP 4: 완료 & 바인더 위치
-# ══════════════════════════════════════════════════
-elif st.session_state.reg_step == "complete":
-    st.subheader("✅ 입고 등록 완료")
-
-    all_items = st.session_state.reg_items
-    selected = st.session_state.reg_selected
-    today_str = date.today().isoformat()
-
-    # ── 바인더 위치 입력 ──
-    st.write("라벨 실물 보관 위치를 기록하세요 (선택사항):")
-    binder_loc = st.text_input(
-        "바인더 위치", placeholder="예: A-01, 냉장고 위 선반", key="binder_input"
-    )
-
-    # ── 결과 요약 ──
-    st.markdown("---")
-    st.write("**등록 결과 요약:**")
-
-    complete_count = 0
-    incomplete_count = 0
-    products_to_save = []
-
-    for it in all_items:
-        # 선택 항목에서 날짜 정보 가져오기
-        matched = next(
-            (s for s in selected if s["name"] == it["name"]), None
-        )
-        expiry = None
-        status = "incomplete"
-        registered_by = "manual"
-        label_image = None
-
-        if matched and matched.get("expiry_date"):
-            expiry = matched["expiry_date"]
-            status = "complete"
-            registered_by = matched.get("registered_by", "manual")
-            label_image = matched.get("label_image")
-            complete_count += 1
-        elif matched and matched.get("status") == "incomplete":
-            incomplete_count += 1
-        else:
-            # 미선택 항목도 등록 (날짜 없이)
-            incomplete_count += 1
-
-        p = new_product(
-            name=it["name"],
-            grade=it["grade"],
-            intake_date=today_str,
-            expiry_date=expiry,
-            status=status,
-            invoice_image=st.session_state.reg_invoice_path,
-            label_image=label_image,
-            binder_location=binder_loc if binder_loc else None,
-            registered_by=registered_by,
-        )
-        products_to_save.append(p)
-
-        # 결과 표시
-        icon = "✅" if status == "complete" else "⏳"
-        exp_text = expiry if expiry else "미등록"
-        grade_text = "🔴A" if it["grade"] == "A" else ""
-        st.write(f"{icon} **{it['name']}** {grade_text} — 소비기한: {exp_text}")
-
-    st.markdown("---")
-    st.write(f"✅ 완료: {complete_count}건 | ⏳ 미완료: {incomplete_count}건")
-
-    # ── 저장 버튼 ──
-    if st.button("💾 모두 저장하고 종료", use_container_width=True, type="primary"):
+            products_to_save.append(p)
         save_products_bulk(products_to_save)
 
-        # 이력 기록 (완료된 항목만)
-        for p in products_to_save:
-            if p["status"] == "complete" and p.get("expiry_date"):
-                record_history(p["name"], p["intake_date"], p["expiry_date"])
-
         # 발주표 완료 처리
-        for it in all_items:
+        for it in updated_items:
             if it.get("preorder_id"):
                 complete_preorder(it["preorder_id"])
 
-        snap_go_count = sum(
-            1 for it in all_items if it.get("registered_by") == "snap_go"
-        )
-        if snap_go_count:
-            st.info(f"⚡ {snap_go_count}건은 Snap & Go로 촬영됨. 홈 화면에서 AI 분석 완료 알림을 확인하세요.")
-
-        st.success(f"✅ {len(products_to_save)}건이 등록되었습니다!")
+        n = len(products_to_save)
         reset_workflow()
+        st.success(f"✅ {n}개 품목 저장 완료! 소비기한은 [소비기한 업데이트]에서 추가하세요.")
         st.balloons()
-
-        if st.button("홈으로 돌아가기", use_container_width=True):
+        if st.button("🏠 홈으로", use_container_width=True, key="review_home"):
             st.switch_page(st.session_state["_home_pg"])
+
+
+# (date_entry / complete 단계 제거 — Snap & Go 흐름으로 대체됨)
