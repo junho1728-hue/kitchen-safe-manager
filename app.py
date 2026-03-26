@@ -314,14 +314,23 @@ def home_page():
     urgent = sum(1 for p in all_prods if p.get("expiry_date") and
                  (date.fromisoformat(p["expiry_date"]) - date.today()).days <= 3)
 
-    # 대기함 건수
+    # 대기함 알림 (홈 상단에 표시)
     staging_batches = load_staging()
     staging_count = len(staging_batches)
+    if staging_count > 0:
+        st.markdown(
+            f"<div style='background:#1e3a5f;border:1px solid #3b82f6;border-radius:0.75rem;"
+            f"padding:0.75rem 1rem;margin-bottom:1rem;display:flex;align-items:center;"
+            f"justify-content:space-between;'>"
+            f"<span style='font-size:0.95rem;'>📦 대기함에 <strong>{staging_count}건</strong> 대기 중</span>"
+            f"<span style='color:#60a5fa;font-size:0.85rem;'>입고 등록 → 대기함 탭</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
 
     menu_items = [
-        ("btn_staging",  "pages/staging.py",           "📦", "대기함",           staging_count if staging_count else None),
         ("btn_expiry",   "pages/expiry_view.py",       "⏱",  "소비기한 관리",    urgent if urgent else None),
-        ("btn_register", "pages/invoice_register.py",  "📋", "식자재 입고 등록",  None),
+        ("btn_register", "pages/invoice_register.py",  "📋", "식자재 입고 등록",  staging_count if staging_count else None),
         ("btn_update",   "pages/expiry_update.py",     "📷", "소비기한 업데이트", None),
         ("btn_preorder", "pages/preorder.py",          "📦", "발주표 미리 등록",  None),
     ]
@@ -365,7 +374,7 @@ components.html("""
             const doc = window.parent.document;
 
             // ── 홈 메뉴 버튼에 카드 CSS 클래스 부여 ──
-            const menuLabels = ['대기함', '소비기한 관리', '식자재 입고 등록', '소비기한 업데이트', '발주표 미리 등록'];
+            const menuLabels = ['소비기한 관리', '식자재 입고 등록', '소비기한 업데이트', '발주표 미리 등록'];
             doc.querySelectorAll('[data-testid="stButton"]').forEach(el => {
                 const btn = el.querySelector('button');
                 if (!btn) return;
@@ -390,9 +399,9 @@ components.html("""
                     + 'padding:0.6rem 0 calc(0.8rem + env(safe-area-inset-bottom));';
                 const items = [
                     {icon:'🏠', label:'홈',     href:'/'},
-                    {icon:'📦', label:'대기함',  href:'/?nav=staging'},
                     {icon:'⏱️', label:'소비기한', href:'/?nav=expiry'},
                     {icon:'📋', label:'입고',    href:'/?nav=register'},
+                    {icon:'📦', label:'발주',    href:'/?nav=preorder'},
                     {icon:'⚙️', label:'설정',    href:'/?nav=settings'},
                 ];
                 items.forEach(item => {

@@ -11,6 +11,8 @@ from datetime import datetime, date, timedelta
 from services.data_service import (
     load_settings, new_product, save_products_bulk, save_image,
     record_history, load_history, load_preorders, complete_preorder,
+    load_staging, update_staging_batch, remove_staging_batch,
+    register_staging_batch, save_settings, BASE_DIR,
 )
 from services.classification import classify_product
 from services.gemini_service import (
@@ -121,8 +123,12 @@ if st.session_state.reg_step == "capture":
             st.rerun()
         st.markdown("---")
 
-    # ── 3가지 입력 방법 탭 ──
-    tab_invoice, tab_direct, tab_manual = st.tabs(["📸 명세서 촬영", "📷 제품 직접 촬영", "✏️ 품목명 직접 입력"])
+    # ── 4가지 입력 방법 탭 ──
+    staging_batches = load_staging()
+    staging_label = f"📦 대기함 ({len(staging_batches)}건)" if staging_batches else "📦 대기함"
+    tab_invoice, tab_direct, tab_manual, tab_staging = st.tabs(
+        ["📸 명세서 촬영", "📷 제품 직접 촬영", "✏️ 품목명 직접 입력", staging_label]
+    )
 
     # ─────────────────────────────────
     # TAB 1: 명세서 촬영 (기존 방식)
@@ -431,4 +437,152 @@ elif st.session_state.reg_step == "review_list":
             st.switch_page(st.session_state["_home_pg"])
 
 
-# (date_entry / complete 단계 제거 — Snap & Go 흐름으로 대체됨)
+# ─────────────────────────────────
+# TAB 4: 대기함 (AI 분석 완료 → 확인/등록)
+# ─────────────────────────────────
+with tab_staging:
+    staging_batches = load_staging()
+    settings = load_settings()
+    restaurants = settings.get("restaurants", [])
+
+    if not staging_batches:
+        st.info("대기 중인 항목이 없습니다.\n\n명세서를 촬영하면 AI 분석 후 여기에 표시됩니다.")
+    else:
+        st.markdown(f"**{len(staging_batches)}건**의 배치가 대기 중입니다.")
+        st.markdown("---")
+
+        for batch_idx, batch in enumerate(staging_batches):
+            batch_id = batch["id"]
+            source_label = {
+                "invoice": "📋 명세서", "bundle": "📷 제품 촬영", "manual": "✏️ 수동"
+            }.get(batch.get("source", ""), "📋")
+            created = batch.get("created_at", "")[:16].replace("T", " ")
+
+            st.markdown(f"**{source_label} 배치 #{batch_idx + 1}** — {created}")
+
+            # 사진 썸네일
+            img_path = batch.get("image_path")
+            if img_path:
+                full_path = BASE_DIR / img_path
+                if full_path.exists():
+                    st.image(str(full_path), caption="원본 사진", width=200)
+
+            # 코너/음식점 지정
+            detected_corner = batch.get("restaurant", "")
+            corner_options = ["(미분류)"] + restaurants
+
+            if detected_corner and detected_corner not in restaurants:
+                st.info(f"🔍 AI 감지 코너: **{detected_corner}** (기존 목록에 없음)")
+                col_y, col_n = st.columns(2)
+                with col_y:
+                    if st.button(
+                        f"'{detected_corner}' 새로 추가",
+                        key=f"stg_add_corner_{batch_id}",
+                        use_container_width=True,
+                        type="primary",
+                    ):
+                        restaurants.append(detected_corner)
+                        settings["restaurants"] = restaurants
+                        save_settings(settings)
+                        st.toast(f"'{detected_corner}' 코너 추가!")
+                        st.rerun()
+                with col_n:
+                    if st.button("무시", key=f"stg_ign_corner_{batch_id}", use_container_width=True):
+                        update_staging_batch(batch_id, {"restaurant": ""})
+                        st.rerun()
+                corner_options = ["(미분류)"] + restaurants
+
+            if detected_corner and detected_corner in restaurants:
+                default_idx = corner_options.index(detected_corner)
+            else:
+                default_idx = 0
+
+            selected_corner = st.selectbox(
+                "🏪 코너/음식점",
+                corner_options,
+                index=default_idx,
+                key=f"stg_corner_{batch_id}",
+            )
+
+            # 품목 리스트
+            items = batch.get("items", [])
+            if not items:
+                st.warning("품목이 없습니다.")
+                if st.button("배치 삭제", key=f"stg_del_empty_{batch_id}", use_container_width=True):
+                    remove_staging_batch(batch_id)
+                    st.rerun()
+                continue
+
+            updated_items = []
+            for item_idx, item in enumerate(items):
+                grade = item.get("grade", "normal")
+                grade_label = {"A": "🔴A", "B": "🟡B", "C": "🟢C", "exclude": "⚪제외"}.get(grade, "")
+
+                col_chk, col_nm, col_gr = st.columns([1, 4, 1])
+                with col_chk:
+                    sel = st.checkbox("", value=item.get("selected", True),
+                                      key=f"stg_sel_{batch_id}_{item_idx}", label_visibility="collapsed")
+                with col_nm:
+                    new_name = st.text_input("품목", value=item.get("name", ""),
+                                             key=f"stg_name_{batch_id}_{item_idx}", label_visibility="collapsed")
+                with col_gr:
+                    st.markdown(f"<span style='font-size:0.85rem;'>{grade_label}</span>", unsafe_allow_html=True)
+
+                # 소비기한 입력 (직접 / 사진)
+                exp_tab1, exp_tab2 = st.tabs(["📅 직접입력", "📷 사진촬영"])
+                with exp_tab1:
+                    cur_exp = None
+                    if item.get("expiry_date"):
+                        try:
+                            cur_exp = datetime.strptime(item["expiry_date"], "%Y-%m-%d").date()
+                        except ValueError:
+                            pass
+                    new_exp = st.date_input("소비기한", value=cur_exp or date.today(),
+                                            key=f"stg_exp_{batch_id}_{item_idx}", label_visibility="collapsed")
+                    final_exp = new_exp.isoformat() if new_exp else item.get("expiry_date")
+
+                with exp_tab2:
+                    uploaded = st.file_uploader("라벨 사진", type=["jpg", "jpeg", "png", "heic"],
+                                               key=f"stg_upload_{batch_id}_{item_idx}", label_visibility="collapsed")
+                    if uploaded:
+                        api_key = settings.get("api_key", "")
+                        model = settings.get("model", "gemini-2.5-flash-lite")
+                        if api_key:
+                            with st.spinner("AI 소비기한 추출 중..."):
+                                try:
+                                    img_bytes = uploaded.read()
+                                    detected = extract_date_from_label(api_key, model, img_bytes)
+                                    if detected:
+                                        final_exp = detected
+                                        st.success(f"소비기한 감지: {detected}")
+                                    else:
+                                        st.warning("소비기한을 찾을 수 없습니다.")
+                                except Exception as e:
+                                    st.error(f"AI 분석 실패: {e}")
+                        else:
+                            st.warning("설정에서 API 키를 등록해주세요.")
+
+                updated_items.append({
+                    **item, "name": new_name, "selected": sel, "expiry_date": final_exp,
+                })
+
+            st.markdown("---")
+
+            # 액션 버튼
+            sel_count = sum(1 for it in updated_items if it.get("selected", True))
+            col_reg, col_del = st.columns(2)
+            with col_reg:
+                if st.button(f"✅ {sel_count}건 등록", key=f"stg_reg_{batch_id}",
+                             use_container_width=True, type="primary", disabled=sel_count == 0):
+                    actual_corner = "" if selected_corner == "(미분류)" else selected_corner
+                    update_staging_batch(batch_id, {"items": updated_items, "restaurant": actual_corner})
+                    products = register_staging_batch(batch_id, restaurant=actual_corner)
+                    st.toast(f"✅ {len(products)}건 등록 완료!", icon="✅")
+                    st.rerun()
+            with col_del:
+                if st.button("🗑️ 삭제", key=f"stg_del_{batch_id}", use_container_width=True):
+                    remove_staging_batch(batch_id)
+                    st.toast("배치 삭제 완료", icon="🗑️")
+                    st.rerun()
+
+            st.markdown("---")
