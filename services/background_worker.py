@@ -158,13 +158,16 @@ class BackgroundWorker:
                 "label_image_path": label_path,
             }
 
-        # ── 명세서 일괄 처리 (Snap & Go) ──
+        # ── 명세서 일괄 처리 (Snap & Go) → 대기함으로 저장 ──
         if task["task_type"] == "invoice_batch":
             from services.gemini_service import extract_invoice_items, analyze_products_comprehensive
             from services.classification import classify_product
-            from services.data_service import new_product, save_products_bulk
+            from services.data_service import add_staging_batch
+            import uuid as _uuid
 
-            items = extract_invoice_items(task["api_key"], task["model"], image_bytes)
+            invoice_result = extract_invoice_items(task["api_key"], task["model"], image_bytes)
+            items = invoice_result.get("items", [])
+            corner = invoice_result.get("corner", "")
             if not items:
                 return {"error": "품목 추출 실패", "count": 0}
 
@@ -174,28 +177,41 @@ class BackgroundWorker:
                 analyzed = []
 
             ai_map = {a["name"]: a for a in analyzed}
-            products = []
+            staging_items = []
             for name in items:
                 ai = ai_map.get(name, {})
                 grade = ai.get("grade") or classify_product(name)
-                if grade == "exclude":
-                    continue
-                p = new_product(
-                    name=name,
-                    grade=grade,
-                    status="incomplete",
-                    registered_by="invoice_snap",
-                )
-                products.append(p)
+                staging_items.append({
+                    "id": str(_uuid.uuid4()),
+                    "name": name,
+                    "grade": grade,
+                    "storage": ai.get("storage", ""),
+                    "ai_reason": ai.get("reason", ""),
+                    "expiry_date": None,
+                    "origin": None,
+                    "selected": grade != "exclude",
+                })
 
-            if products:
-                save_products_bulk(products)
+            batch = add_staging_batch(
+                source="invoice",
+                image_path=task["image_path"],
+                restaurant=corner,
+                items=staging_items,
+            )
 
-            return {"count": len(products), "product_names": [p["name"] for p in products]}
+            return {
+                "count": len(staging_items),
+                "batch_id": batch["id"],
+                "corner": corner,
+                "product_names": [i["name"] for i in staging_items],
+            }
 
-        # ── 신규: 번들 분석 (PIL 보정 백그라운드 처리 + 3필드 추출) ──
+        # ── 번들 분석 (PIL 보정 + 3필드 추출) → 대기함으로 저장 ──
         if task["task_type"] == "product_bundle":
             from services.gemini_service import verify_and_analyze_bundle
+            from services.data_service import add_staging_batch, delete_product
+            from services.classification import classify_product
+            import uuid as _uuid
 
             bundle_paths = task.get("bundle_image_paths") or [task["image_path"]]
             image_bytes_list = []
@@ -223,21 +239,37 @@ class BackgroundWorker:
             result = verify_and_analyze_bundle(
                 task["api_key"], task["model"], image_bytes_list
             )
-            status = result.get("status", "ok")
 
-            # ok → 즉시 DB 업데이트 (메모리 의존 제거)
-            if status == "ok":
-                from services.data_service import update_product_by_task_id
-                update_product_by_task_id(
-                    task["task_id"],
-                    name=result.get("product_name") or None,
-                    expiry_date=result.get("expiry_date"),
-                    origin=result.get("origin"),
-                )
+            # 기존 플레이스홀더 제품 삭제 (staging으로 대체)
+            try:
+                delete_product(task["task_id"])
+            except Exception:
+                pass
+
+            p_name = result.get("product_name", "") or "인식불가"
+            grade = classify_product(p_name)
+
+            staging_items = [{
+                "id": str(_uuid.uuid4()),
+                "name": p_name,
+                "grade": grade if grade != "exclude" else "normal",
+                "storage": "",
+                "ai_reason": result.get("reason", ""),
+                "expiry_date": result.get("expiry_date"),
+                "origin": result.get("origin"),
+                "selected": True,
+            }]
+
+            batch = add_staging_batch(
+                source="bundle",
+                image_path=bundle_paths[0] if bundle_paths else None,
+                items=staging_items,
+            )
 
             return {
-                "status": status,
-                "product_name": result.get("product_name", ""),
+                "status": result.get("status", "ok"),
+                "batch_id": batch["id"],
+                "product_name": p_name,
                 "date": result.get("expiry_date"),
                 "origin": result.get("origin"),
                 "reason": result.get("reason", ""),

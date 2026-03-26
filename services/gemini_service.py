@@ -13,7 +13,15 @@ from google.genai import types
 # ── 프롬프트 상수 ──
 
 INVOICE_EXTRACTION_PROMPT = """이 이미지는 식자재 거래명세서(납품서/발주서)입니다.
-문서에 행(row)으로 나열된 납품 품목명만 추출하세요.
+문서에서 두 가지를 추출하세요:
+
+1. corner (코너명/매장명/부서명):
+   - 명세서 상단에 적힌 납품처, 코너명, 매장명, 부서명을 찾으세요.
+   - 예: "한식코너", "양식코너", "구내식당", "1층 매장"
+   - 없으면 빈 문자열 ""
+
+2. items (납품 품목명 목록):
+   - 명세서에 행(줄)으로 나열된 납품 상품명만 추출하세요.
 
 절대 하지 말 것:
 - 제품 포장지나 라벨의 원재료명(소금, 설탕, 유화제 등)을 품목으로 추출하지 마세요.
@@ -21,13 +29,11 @@ INVOICE_EXTRACTION_PROMPT = """이 이미지는 식자재 거래명세서(납품
 - 제조사명, 주소, 연락처를 품목으로 추출하지 마세요.
 - 수량, 단가, 금액 등 숫자 정보는 제외하세요.
 
-반드시 할 것:
-- 명세서에 독립 행(줄)으로 나열된 납품 상품명만 추출하세요.
-- 예: "돼지고기 삼겹살", "계란 30구", "두부 500g", "참치캔"
-- 반드시 JSON 배열 형식으로만 반환하세요.
-
-예시 출력:
-["돼지고기 앞다리", "계란 30구", "두부", "고등어", "참치캔"]
+반드시 JSON 형식으로만 반환하세요:
+{
+  "corner": "코너명 또는 빈 문자열",
+  "items": ["돼지고기 앞다리", "계란 30구", "두부"]
+}
 """
 
 COMPREHENSIVE_GRADE_PROMPT = """아래 식자재 품목명 목록을 분석하여 각 제품의 위생 관리 등급을 결정하세요.
@@ -180,14 +186,11 @@ def _parse_date(text: str) -> str | None:
     return None
 
 
-def extract_invoice_items(api_key: str, model: str, image_bytes: bytes) -> list[str]:
-    """명세서 이미지에서 품목 리스트 추출.
+def extract_invoice_items(api_key: str, model: str, image_bytes: bytes) -> dict:
+    """명세서 이미지에서 품목 리스트 + 코너명 추출.
 
     Returns:
-        품목명 리스트. 실패 시 빈 리스트.
-
-    Raises:
-        Exception: API 호출 실패 시.
+        {"corner": str, "items": list[str]}. 실패 시 {"corner": "", "items": []}.
     """
     client = _create_client(api_key)
     response = client.models.generate_content(
@@ -197,7 +200,21 @@ def extract_invoice_items(api_key: str, model: str, image_bytes: bytes) -> list[
             types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
         ],
     )
-    return _parse_json_array(response.text)
+    text = re.sub(r"```(?:json)?\s*", "", response.text).strip()
+    try:
+        result = json.loads(text)
+        if isinstance(result, dict):
+            return {
+                "corner": result.get("corner", ""),
+                "items": [str(i).strip() for i in result.get("items", []) if str(i).strip()],
+            }
+        # 하위 호환: 배열만 반환한 경우
+        if isinstance(result, list):
+            return {"corner": "", "items": [str(i).strip() for i in result if str(i).strip()]}
+    except json.JSONDecodeError:
+        pass
+    # 폴백: 기존 파서
+    return {"corner": "", "items": _parse_json_array(text)}
 
 
 def extract_date_from_label(api_key: str, model: str, image_bytes: bytes) -> str | None:

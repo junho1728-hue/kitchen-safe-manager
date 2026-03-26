@@ -13,6 +13,7 @@ PRODUCTS_FILE = DATA_DIR / "products.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 HISTORY_FILE = DATA_DIR / "history.json"
 PREORDERS_FILE = DATA_DIR / "preorders.json"
+STAGING_FILE = DATA_DIR / "staging.json"
 
 
 def _ensure_dirs():
@@ -269,3 +270,90 @@ def complete_preorder(preorder_id: str):
 def delete_preorder(preorder_id: str):
     preorders = load_preorders()
     save_preorders([p for p in preorders if p["id"] != preorder_id])
+
+
+# ── Staging (대기함) ──
+
+
+def load_staging() -> list[dict]:
+    """대기함 배치 목록 로드."""
+    return _read_json(STAGING_FILE)
+
+
+def save_staging(batches: list[dict]):
+    _write_json(STAGING_FILE, batches)
+
+
+def add_staging_batch(
+    source: str,
+    image_path: str | None = None,
+    restaurant: str = "",
+    items: list[dict] | None = None,
+) -> dict:
+    """대기함에 새 배치 추가. source: 'invoice' | 'bundle' | 'manual'"""
+    now = datetime.now().isoformat(timespec="seconds")
+    batch = {
+        "id": str(uuid.uuid4()),
+        "created_at": now,
+        "source": source,
+        "image_path": image_path,
+        "restaurant": restaurant,
+        "items": items or [],
+        "status": "ready",
+    }
+    batches = load_staging()
+    batches.append(batch)
+    save_staging(batches)
+    return batch
+
+
+def get_staging_batch(batch_id: str) -> dict | None:
+    for b in load_staging():
+        if b["id"] == batch_id:
+            return b
+    return None
+
+
+def update_staging_batch(batch_id: str, updates: dict):
+    batches = load_staging()
+    for b in batches:
+        if b["id"] == batch_id:
+            b.update(updates)
+            break
+    save_staging(batches)
+
+
+def remove_staging_batch(batch_id: str):
+    batches = load_staging()
+    save_staging([b for b in batches if b["id"] != batch_id])
+
+
+def register_staging_batch(batch_id: str, restaurant: str = "") -> list[dict]:
+    """대기함 배치를 정식 등록 (products.json으로 이동).
+
+    Returns: 등록된 product 리스트.
+    """
+    batch = get_staging_batch(batch_id)
+    if not batch:
+        return []
+
+    products = []
+    for item in batch.get("items", []):
+        if not item.get("selected", True):
+            continue
+        p = new_product(
+            name=item.get("name", "미확인"),
+            grade=item.get("grade", "normal"),
+            expiry_date=item.get("expiry_date"),
+            status="complete" if item.get("expiry_date") else "incomplete",
+            origin=item.get("origin"),
+            restaurant=restaurant or batch.get("restaurant", ""),
+            invoice_image=batch.get("image_path"),
+            registered_by=f"staging_{batch.get('source', 'unknown')}",
+        )
+        products.append(p)
+
+    if products:
+        save_products_bulk(products)
+    remove_staging_batch(batch_id)
+    return products

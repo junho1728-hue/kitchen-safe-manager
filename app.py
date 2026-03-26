@@ -4,7 +4,7 @@ from datetime import date
 from services.background_worker import get_worker
 from services.data_service import (
     new_product, save_products_bulk, record_history, update_product_by_task_id,
-    load_products,
+    load_products, load_staging,
 )
 
 st.set_page_config(
@@ -184,6 +184,7 @@ def home_page():
     if nav:
         st.query_params.clear()
         _nav_map = {
+            "staging":  "pages/staging.py",
             "expiry":   "pages/expiry_view.py",
             "register": "pages/invoice_register.py",
             "update":   "pages/expiry_update.py",
@@ -313,11 +314,16 @@ def home_page():
     urgent = sum(1 for p in all_prods if p.get("expiry_date") and
                  (date.fromisoformat(p["expiry_date"]) - date.today()).days <= 3)
 
+    # 대기함 건수
+    staging_batches = load_staging()
+    staging_count = len(staging_batches)
+
     menu_items = [
-        ("btn_expiry",   "pages/expiry_view.py",     "⏱",  "소비기한 관리",    urgent if urgent else None),
-        ("btn_register", "pages/invoice_register.py", "📋", "식자재 입고 등록",  None),
-        ("btn_update",   "pages/expiry_update.py",    "📷", "소비기한 업데이트", None),
-        ("btn_preorder", "pages/preorder.py",         "📦", "발주표 미리 등록",  None),
+        ("btn_staging",  "pages/staging.py",           "📦", "대기함",           staging_count if staging_count else None),
+        ("btn_expiry",   "pages/expiry_view.py",       "⏱",  "소비기한 관리",    urgent if urgent else None),
+        ("btn_register", "pages/invoice_register.py",  "📋", "식자재 입고 등록",  None),
+        ("btn_update",   "pages/expiry_update.py",     "📷", "소비기한 업데이트", None),
+        ("btn_preorder", "pages/preorder.py",          "📦", "발주표 미리 등록",  None),
     ]
     for key, page, icon, title, badge in menu_items:
         badge_txt = f"  ·  {badge}건 위험" if badge else ""
@@ -339,6 +345,7 @@ st.session_state["_home_pg"] = _home_pg
 pg = st.navigation(
     [
         _home_pg,
+        st.Page("pages/staging.py", title="대기함"),
         st.Page("pages/expiry_view.py", title="소비기한 관리"),
         st.Page("pages/invoice_register.py", title="식자재 입고 등록"),
         st.Page("pages/expiry_update.py", title="소비기한 업데이트"),
@@ -358,7 +365,7 @@ components.html("""
             const doc = window.parent.document;
 
             // ── 홈 메뉴 버튼에 카드 CSS 클래스 부여 ──
-            const menuLabels = ['소비기한 관리', '식자재 입고 등록', '소비기한 업데이트', '발주표 미리 등록'];
+            const menuLabels = ['대기함', '소비기한 관리', '식자재 입고 등록', '소비기한 업데이트', '발주표 미리 등록'];
             doc.querySelectorAll('[data-testid="stButton"]').forEach(el => {
                 const btn = el.querySelector('button');
                 if (!btn) return;
@@ -383,9 +390,9 @@ components.html("""
                     + 'padding:0.6rem 0 calc(0.8rem + env(safe-area-inset-bottom));';
                 const items = [
                     {icon:'🏠', label:'홈',     href:'/'},
+                    {icon:'📦', label:'대기함',  href:'/?nav=staging'},
                     {icon:'⏱️', label:'소비기한', href:'/?nav=expiry'},
                     {icon:'📋', label:'입고',    href:'/?nav=register'},
-                    {icon:'📦', label:'발주',    href:'/?nav=preorder'},
                     {icon:'⚙️', label:'설정',    href:'/?nav=settings'},
                 ];
                 items.forEach(item => {

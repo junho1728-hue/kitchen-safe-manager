@@ -137,8 +137,8 @@ if st.session_state.reg_step == "capture":
 
             # ── 완료 화면 ──
             if isnap == "done":
-                st.success(f"✅ 명세서 {st.session_state.invoice_snap_count}건 접수 완료! AI가 품목을 자동 등록 중입니다.")
-                st.caption("분석이 끝나면 소비기한 관리 화면에 자동으로 반영됩니다.")
+                st.success(f"✅ 명세서 {st.session_state.invoice_snap_count}건 접수 완료! AI가 품목을 분석 중입니다.")
+                st.caption("분석 완료 후 **대기함**에서 확인하고 등록할 수 있습니다.")
                 st.markdown("---")
                 col_next, col_home = st.columns(2)
                 with col_next:
@@ -243,18 +243,7 @@ if st.session_state.reg_step == "capture":
                             bundle_image_paths=saved_paths,
                         )
 
-                        # DB에 즉시 저장 (placeholder — AI가 나중에 이름/날짜 업데이트)
-                        p = new_product(
-                            name=f"분석중_{ts}",
-                            grade="B",
-                            intake_date=date.today().isoformat(),
-                            expiry_date=None,
-                            status="incomplete",
-                            label_image=saved_paths[-1],
-                            registered_by="snap_go",
-                            task_id=task_id,
-                        )
-                        save_products_bulk([p])
+                        # 대기함으로 저장 (AI 분석 후 staging.json에 추가됨)
 
                         st.session_state.reg_snap_task_ids[f"bundle_{ts}"] = task_id
                         st.session_state.direct_items_done.append({
@@ -272,9 +261,9 @@ if st.session_state.reg_step == "capture":
                 total = len(done_items)
                 last = done_items[-1]
                 st.success(
-                    f"✅ {total}번째 제품 저장! ({last['photo_count']}장 — AI가 제품명·날짜 분석 중)"
+                    f"✅ {total}번째 제품 촬영 완료! ({last['photo_count']}장 — AI 분석 중)"
                 )
-                st.caption("분석 완료 시 홈 화면에 알림이 표시됩니다.")
+                st.caption("분석 완료 후 **대기함**에서 확인/등록할 수 있습니다.")
                 st.markdown("---")
                 col_next, col_home = st.columns(2)
                 with col_next:
