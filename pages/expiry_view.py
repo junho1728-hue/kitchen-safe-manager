@@ -303,16 +303,25 @@ else:
             # ── 품목명 수정 ──
             new_name = st.text_input("품목명 수정", value=name, key=f"name_{p['id']}")
 
+            # ── 소비기한 없음 토글 ──
+            new_no_expiry = st.checkbox(
+                "소비기한 없음 (설탕, 쌀, 소금 등)",
+                value=p.get("no_expiry", False),
+                key=f"noexp_{p['id']}",
+            )
+
             # ── 소비기한 수정 ──
-            try:
-                cur_exp = (
-                    datetime.strptime(expiry, "%Y-%m-%d").date()
-                    if expiry and expiry != "미등록"
-                    else date.today()
-                )
-            except ValueError:
-                cur_exp = date.today()
-            new_exp = st.date_input("소비기한 수정", value=cur_exp, key=f"exp_{p['id']}")
+            new_exp = None
+            if not new_no_expiry:
+                try:
+                    cur_exp = (
+                        datetime.strptime(expiry, "%Y-%m-%d").date()
+                        if expiry and expiry not in ("미등록", "해당 없음")
+                        else date.today()
+                    )
+                except ValueError:
+                    cur_exp = date.today()
+                new_exp = st.date_input("소비기한 수정", value=cur_exp, key=f"exp_{p['id']}")
 
             # ── 음식점/코너 지정 ──
             if restaurants:
@@ -326,15 +335,24 @@ else:
                 new_rest = "(미분류)"
 
             # ── 저장 버튼 ──
-            if st.button("💾 저장", key=f"save_{p['id']}", type="primary", use_container_width=True):
+            if st.button("저장", key=f"save_{p['id']}", type="primary", use_container_width=True):
                 changed = False
                 if new_name != name:
                     p["name"] = new_name
                     changed = True
-                if new_exp.isoformat() != (expiry if expiry != "미등록" else ""):
-                    p["expiry_date"] = new_exp.isoformat()
-                    p["status"] = "complete"
+                # no_expiry 변경
+                if new_no_expiry != p.get("no_expiry", False):
+                    p["no_expiry"] = new_no_expiry
+                    if new_no_expiry:
+                        p["expiry_date"] = None
+                        p["status"] = "complete"
                     changed = True
+                # 소비기한 변경 (no_expiry가 아닐 때만)
+                if not new_no_expiry and new_exp:
+                    if new_exp.isoformat() != (expiry if expiry not in ("미등록", "해당 없음") else ""):
+                        p["expiry_date"] = new_exp.isoformat()
+                        p["status"] = "complete"
+                        changed = True
                 actual_rest = "" if new_rest == "(미분류)" else new_rest
                 if actual_rest != p.get("restaurant", ""):
                     p["restaurant"] = actual_rest
