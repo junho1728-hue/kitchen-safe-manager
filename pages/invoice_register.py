@@ -528,42 +528,53 @@ with tab_staging:
                 with col_gr:
                     st.markdown(f"<span style='font-size:0.85rem;'>{grade_label}</span>", unsafe_allow_html=True)
 
-                # 소비기한 입력 (직접 / 사진)
-                exp_tab1, exp_tab2 = st.tabs(["📅 직접입력", "📷 사진촬영"])
-                with exp_tab1:
-                    cur_exp = None
-                    if item.get("expiry_date"):
-                        try:
-                            cur_exp = datetime.strptime(item["expiry_date"], "%Y-%m-%d").date()
-                        except ValueError:
-                            pass
-                    new_exp = st.date_input("소비기한", value=cur_exp or date.today(),
-                                            key=f"stg_exp_{batch_id}_{item_idx}", label_visibility="collapsed")
-                    final_exp = new_exp.isoformat() if new_exp else item.get("expiry_date")
+                # 소비기한 없음 체크박스
+                no_expiry = st.checkbox(
+                    "소비기한 없음 (설탕, 쌀, 소금 등)",
+                    value=item.get("no_expiry", False),
+                    key=f"stg_noexp_{batch_id}_{item_idx}",
+                )
 
-                with exp_tab2:
-                    uploaded = st.file_uploader("라벨 사진", type=["jpg", "jpeg", "png", "heic"],
-                                               key=f"stg_upload_{batch_id}_{item_idx}", label_visibility="collapsed")
-                    if uploaded:
-                        api_key = settings.get("api_key", "")
-                        model = settings.get("model", "gemini-2.5-flash-lite")
-                        if api_key:
-                            with st.spinner("AI 소비기한 추출 중..."):
-                                try:
-                                    img_bytes = uploaded.read()
-                                    detected = extract_date_from_label(api_key, model, img_bytes)
-                                    if detected:
-                                        final_exp = detected
-                                        st.success(f"소비기한 감지: {detected}")
-                                    else:
-                                        st.warning("소비기한을 찾을 수 없습니다.")
-                                except Exception as e:
-                                    st.error(f"AI 분석 실패: {e}")
-                        else:
-                            st.warning("설정에서 API 키를 등록해주세요.")
+                final_exp = item.get("expiry_date")
+                if not no_expiry:
+                    # 소비기한 입력 (직접 / 사진)
+                    exp_tab1, exp_tab2 = st.tabs(["📅 직접입력", "📷 사진촬영"])
+                    with exp_tab1:
+                        cur_exp = None
+                        if item.get("expiry_date"):
+                            try:
+                                cur_exp = datetime.strptime(item["expiry_date"], "%Y-%m-%d").date()
+                            except ValueError:
+                                pass
+                        new_exp = st.date_input("소비기한", value=cur_exp or date.today(),
+                                                key=f"stg_exp_{batch_id}_{item_idx}", label_visibility="collapsed")
+                        final_exp = new_exp.isoformat() if new_exp else item.get("expiry_date")
+
+                    with exp_tab2:
+                        uploaded = st.file_uploader("라벨 사진", type=["jpg", "jpeg", "png", "heic"],
+                                                   key=f"stg_upload_{batch_id}_{item_idx}", label_visibility="collapsed")
+                        if uploaded:
+                            api_key = settings.get("api_key", "")
+                            model = settings.get("model", "gemini-2.5-flash-lite")
+                            if api_key:
+                                with st.spinner("AI 소비기한 추출 중..."):
+                                    try:
+                                        img_bytes = uploaded.read()
+                                        detected = extract_date_from_label(api_key, model, img_bytes)
+                                        if detected:
+                                            final_exp = detected
+                                            st.success(f"소비기한 감지: {detected}")
+                                        else:
+                                            st.warning("소비기한을 찾을 수 없습니다.")
+                                    except Exception as e:
+                                        st.error(f"AI 분석 실패: {e}")
+                            else:
+                                st.warning("설정에서 API 키를 등록해주세요.")
 
                 updated_items.append({
-                    **item, "name": new_name, "selected": sel, "expiry_date": final_exp,
+                    **item, "name": new_name, "selected": sel,
+                    "expiry_date": None if no_expiry else final_exp,
+                    "no_expiry": no_expiry,
                 })
 
             st.markdown("---")

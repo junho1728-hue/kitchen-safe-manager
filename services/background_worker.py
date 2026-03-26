@@ -189,6 +189,7 @@ class BackgroundWorker:
                     "ai_reason": ai.get("reason", ""),
                     "expiry_date": None,
                     "origin": None,
+                    "no_expiry": bool(ai.get("no_expiry", False)),
                     "selected": grade != "exclude",
                 })
 

@@ -311,7 +311,7 @@ def home_page():
 
     # ── 메뉴 카드 (st.button + CSS) ──
     all_prods = load_products()
-    urgent = sum(1 for p in all_prods if p.get("expiry_date") and
+    urgent = sum(1 for p in all_prods if p.get("expiry_date") and not p.get("no_expiry") and
                  (date.fromisoformat(p["expiry_date"]) - date.today()).days <= 3)
 
     # 대기함 알림 (홈 상단에 표시)

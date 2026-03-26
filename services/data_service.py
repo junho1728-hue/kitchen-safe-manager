@@ -93,9 +93,13 @@ def new_product(
     task_id: str | None = None,
     origin: str | None = None,
     restaurant: str = "",
+    no_expiry: bool = False,
 ) -> dict:
     """새 제품 딕셔너리 생성."""
     now = datetime.now().isoformat(timespec="seconds")
+    if no_expiry:
+        status = "complete"
+        expiry_date = None
     return {
         "id": str(uuid.uuid4()),
         "name": name,
@@ -103,6 +107,7 @@ def new_product(
         "intake_date": intake_date or datetime.now().strftime("%Y-%m-%d"),
         "expiry_date": expiry_date,
         "status": status,
+        "no_expiry": no_expiry,
         "origin": origin,
         "restaurant": restaurant,
         "invoice_image": invoice_image,
@@ -341,15 +346,17 @@ def register_staging_batch(batch_id: str, restaurant: str = "") -> list[dict]:
     for item in batch.get("items", []):
         if not item.get("selected", True):
             continue
+        is_no_expiry = bool(item.get("no_expiry", False))
         p = new_product(
             name=item.get("name", "미확인"),
             grade=item.get("grade", "normal"),
             expiry_date=item.get("expiry_date"),
-            status="complete" if item.get("expiry_date") else "incomplete",
+            status="complete" if item.get("expiry_date") or is_no_expiry else "incomplete",
             origin=item.get("origin"),
             restaurant=restaurant or batch.get("restaurant", ""),
             invoice_image=batch.get("image_path"),
             registered_by=f"staging_{batch.get('source', 'unknown')}",
+            no_expiry=is_no_expiry,
         )
         products.append(p)
 

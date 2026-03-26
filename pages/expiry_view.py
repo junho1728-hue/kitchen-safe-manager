@@ -166,6 +166,8 @@ today = date.today()
 
 
 def days_remaining(p: dict) -> int:
+    if p.get("no_expiry"):
+        return 99999  # 소비기한 없음 → 맨 뒤로
     exp = p.get("expiry_date")
     if not exp:
         return 9999
@@ -175,11 +177,12 @@ def days_remaining(p: dict) -> int:
         return 9999
 
 
-# ── 통계 (전체 합산) ──
+# ── 통계 (전체 합산, no_expiry 제외) ──
 total = len(products)
-urgent = sum(1 for p in products if 0 < days_remaining(p) <= 3)
-warning = sum(1 for p in products if 3 < days_remaining(p) <= 7)
-expired = sum(1 for p in products if days_remaining(p) < 0)
+no_expiry_count = sum(1 for p in products if p.get("no_expiry"))
+urgent = sum(1 for p in products if not p.get("no_expiry") and 0 < days_remaining(p) <= 3)
+warning = sum(1 for p in products if not p.get("no_expiry") and 3 < days_remaining(p) <= 7)
+expired = sum(1 for p in products if not p.get("no_expiry") and days_remaining(p) < 0)
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("전체", f"{total}")
@@ -230,7 +233,11 @@ else:
         grade = p.get("grade", "normal")
         expiry = p.get("expiry_date", "미등록")
 
-        if remaining < 0:
+        if p.get("no_expiry"):
+            card_class = "card-normal"
+            status_text = "♾️ 소비기한 없음"
+            expiry = "해당 없음"
+        elif remaining < 0:
             card_class = "card-expired"
             status_text = f"⛔ {abs(remaining)}일 경과"
         elif remaining <= 3:
