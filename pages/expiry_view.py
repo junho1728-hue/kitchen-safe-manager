@@ -335,13 +335,14 @@ else:
                 if changed:
                     p["updated_at"] = datetime.now().isoformat(timespec="seconds")
                     save_product(p)
-                    st.success("✅ 저장 완료!")
+                    st.toast(f"✅ '{p['name']}' 저장 완료!", icon="💾")
                     st.rerun()
 
             # ── 삭제 버튼 ──
-            if st.button("🗑️ 이 항목 삭제", key=f"del_{p['id']}", type="secondary", use_container_width=True):
+            if st.button("삭제", key=f"del_{p['id']}", type="secondary", use_container_width=True):
+                deleted_name = p.get("name", "항목")
                 delete_product(p["id"])
-                st.success("삭제 완료")
+                st.toast(f"🗑️ '{deleted_name}' 삭제 완료!", icon="🗑️")
                 st.rerun()
 
             st.markdown("---")
