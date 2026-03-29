@@ -18,7 +18,7 @@ from services.gemini_service import extract_invoice_items, analyze_products_comp
 from services.classification import classify_product
 
 st.markdown("<div style='height:2rem'></div>", unsafe_allow_html=True)
-st.markdown("<p class='page-header'>📦 발주표 미리 등록</p>", unsafe_allow_html=True)
+st.markdown("<p class='page-header'><span class='material-symbols-outlined'>shopping_cart</span> 발주표 미리 등록</p>", unsafe_allow_html=True)
 
 if st.button("← 홈으로", key="pre_back"):
     st.switch_page(st.session_state["_home_pg"])

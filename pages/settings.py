@@ -4,7 +4,7 @@ import streamlit as st
 from services.data_service import load_settings, save_settings, load_products, IMAGES_DIR
 
 st.markdown("<div style='height:2rem'></div>", unsafe_allow_html=True)
-st.markdown("<p class='page-header'>⚙️ 설정</p>", unsafe_allow_html=True)
+st.markdown("<p class='page-header'><span class='material-symbols-outlined'>settings</span> 설정</p>", unsafe_allow_html=True)
 
 if st.button("← 홈으로", key="settings_back"):
     st.switch_page(st.session_state["_home_pg"])

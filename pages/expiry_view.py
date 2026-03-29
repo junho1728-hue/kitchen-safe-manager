@@ -89,47 +89,10 @@ def check_origin_required(product_name: str) -> list[str]:
 st.markdown(
     """
 <style>
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.65; }
-}
-.card-red {
-    background: linear-gradient(135deg, #b71c1c, #d32f2f) !important;
-    border-radius: 12px; padding: 12px; margin: 4px 0;
-    animation: pulse 1.5s infinite;
-}
-.card-yellow {
-    background: linear-gradient(135deg, #e65100, #f57c00) !important;
-    border-radius: 12px; padding: 12px; margin: 4px 0;
-}
-.card-normal {
-    background: #16213e !important;
-    border-radius: 12px; padding: 12px; margin: 4px 0;
-}
-.card-expired {
-    background: linear-gradient(135deg, #4a0000, #7f0000) !important;
-    border-radius: 12px; padding: 12px; margin: 4px 0;
-    animation: pulse 0.8s infinite;
-}
-.grade-badge-a {
-    background: #d32f2f; color: #fff; padding: 2px 8px; border-radius: 8px;
-    font-size: 0.85rem; font-weight: 700;
-}
-.grade-badge-b {
-    background: #f57c00; color: #fff; padding: 2px 8px; border-radius: 8px;
-    font-size: 0.85rem; font-weight: 700;
-}
-.grade-badge-c {
-    background: #388e3c; color: #fff; padding: 2px 8px; border-radius: 8px;
-    font-size: 0.85rem;
-}
-.grade-badge-normal {
-    background: #555; color: #ccc; padding: 2px 8px; border-radius: 8px;
-    font-size: 0.85rem;
-}
-.origin-badge {
-    background: #1565c0; color: #fff; padding: 2px 7px; border-radius: 8px;
-    font-size: 0.78rem; font-weight: 600;
+/* 소비기한 관리 — 스타일은 전역 CSS에서 관리 */
+.section-label {
+    text-transform: uppercase; letter-spacing: 0.15em;
+    font-weight: 700; font-size: 0.8rem; color: #94a3b8;
 }
 </style>
 """,
@@ -138,7 +101,7 @@ st.markdown(
 
 # 제목 잘림 방지 여백
 st.markdown("<div style='height:2rem'></div>", unsafe_allow_html=True)
-st.markdown("<p class='page-header'>🔍 소비기한 관리</p>", unsafe_allow_html=True)
+st.markdown("<p class='page-header'><span class='material-symbols-outlined'>hourglass_bottom</span> 소비기한 관리</p>", unsafe_allow_html=True)
 
 if st.button("← 홈으로", key="expiry_back"):
     st.switch_page(st.session_state["_home_pg"])
@@ -184,11 +147,24 @@ urgent = sum(1 for p in products if not p.get("no_expiry") and 0 < days_remainin
 warning = sum(1 for p in products if not p.get("no_expiry") and 3 < days_remaining(p) <= 7)
 expired = sum(1 for p in products if not p.get("no_expiry") and days_remaining(p) < 0)
 
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("전체", f"{total}")
-c2.metric("🔴 긴급 (3일↓)", f"{urgent}")
-c3.metric("🟡 주의 (7일↓)", f"{warning}")
-c4.metric("⛔ 기한 경과", f"{expired}")
+st.markdown(f"""<div class="summary-grid">
+<div class="summary-card summary-all">
+<div class="summary-top"><span class="material-symbols-outlined summary-icon">inventory_2</span><span class="summary-number">{total:02d}</span></div>
+<p class="summary-label">전체</p>
+</div>
+<div class="summary-card summary-urgent">
+<div class="summary-top"><span class="material-symbols-outlined summary-icon" style="font-variation-settings:'FILL' 1;">emergency_home</span><span class="summary-number">{urgent:02d}</span></div>
+<p class="summary-label">긴급 (3일 이내)</p>
+</div>
+<div class="summary-card summary-warning">
+<div class="summary-top"><span class="material-symbols-outlined summary-icon">warning</span><span class="summary-number">{warning:02d}</span></div>
+<p class="summary-label">주의 (7일 이내)</p>
+</div>
+<div class="summary-card summary-expired">
+<div class="summary-top"><span class="material-symbols-outlined summary-icon" style="font-variation-settings:'FILL' 1;">timer_off</span><span class="summary-number">{expired:02d}</span></div>
+<p class="summary-label">기한 경과</p>
+</div>
+</div>""", unsafe_allow_html=True)
 
 # ── 음식점 필터 버튼 ──
 if restaurants:
@@ -233,56 +209,88 @@ else:
         grade = p.get("grade", "normal")
         expiry = p.get("expiry_date", "미등록")
 
-        if p.get("no_expiry"):
-            card_class = "card-normal"
-            status_text = "♾️ 소비기한 없음"
-            expiry = "해당 없음"
-        elif remaining < 0:
-            card_class = "card-expired"
-            status_text = f"⛔ {abs(remaining)}일 경과"
-        elif remaining <= 3:
-            card_class = "card-red"
-            status_text = f"🔴 {remaining}일 남음"
-        elif remaining <= 7:
-            card_class = "card-yellow"
-            status_text = f"🟡 {remaining}일 남음"
-        elif remaining == 9999:
-            card_class = "card-normal"
-            status_text = "📋 소비기한 미등록"
-        else:
-            card_class = "card-normal"
-            status_text = f"✅ {remaining}일 남음"
-
+        # ── 카드 스타일 변수 ──
         grade_map = {
-            "A": ("grade-badge-a", "A 집중관리"),
-            "B": ("grade-badge-b", "B 일반관리"),
-            "C": ("grade-badge-c", "C 저위험"),
+            "A": ("grade-chip-a", "A 집중"),
+            "B": ("grade-chip-b", "B 일반"),
+            "C": ("grade-chip-c", "C 저위험"),
         }
-        grade_badge, grade_label = grade_map.get(grade, ("grade-badge-normal", "일반"))
+        grade_chip, grade_label = grade_map.get(grade, ("grade-chip-normal", "일반"))
+        thumb_icon = {"A": "local_fire_department", "B": "kitchen", "C": "ac_unit"}.get(grade, "category")
 
         rest_tag = p.get("restaurant", "")
-        rest_display = f" · 🏪 {rest_tag}" if rest_tag else ""
+        rest_display = f" · {rest_tag}" if rest_tag else ""
 
         # 원산지 표시 의무 확인
         origin_reqs = check_origin_required(name)
+        origin_badge = '<span style="display:inline-block;background:#1565c0;color:#fff;padding:2px 7px;border-radius:0.5rem;font-size:0.7rem;font-weight:600;margin-left:0.5rem;">원산지 의무</span>' if origin_reqs else ''
 
-        # HTML을 문자열 조합으로 생성 (들여쓰기로 인한 마크다운 코드블록 오인 방지)
-        badge_html = f'<span class="origin-badge" style="margin-left:6px;">📋 원산지표시 의무</span>' if origin_reqs else ''
+        if p.get("no_expiry"):
+            card_variant = ""
+            thumb_class = "product-thumb-noexpiry"
+            d_day_class = "d-day-noexpiry"
+            d_day_text = "&#8734;"
+            status_class = "product-status-normal"
+            status_icon = "all_inclusive"
+            status_label = "소비기한 없음"
+            expiry = "해당 없음"
+        elif remaining < 0:
+            card_variant = "product-card-expired"
+            thumb_class = "product-thumb-expired"
+            d_day_class = "d-day-expired"
+            d_day_text = f"D+{abs(remaining)}"
+            status_class = "product-status-expired"
+            status_icon = "error"
+            status_label = "소비기한 만료"
+        elif remaining <= 3:
+            card_variant = "product-card-urgent"
+            thumb_class = "product-thumb-urgent"
+            d_day_class = "d-day-urgent"
+            d_day_text = f"D-{remaining}"
+            status_class = "product-status-urgent"
+            status_icon = "error"
+            status_label = f"{remaining}일 남음"
+        elif remaining <= 7:
+            card_variant = "product-card-warning"
+            thumb_class = "product-thumb-warning"
+            d_day_class = "d-day-warning"
+            d_day_text = f"D-{remaining}"
+            status_class = "product-status-warning"
+            status_icon = "schedule"
+            status_label = f"{remaining}일 남음"
+        elif remaining == 9999:
+            card_variant = ""
+            thumb_class = "product-thumb-normal"
+            d_day_class = "d-day-normal"
+            d_day_text = "---"
+            status_class = "product-status-normal"
+            status_icon = "event_busy"
+            status_label = "소비기한 미등록"
+        else:
+            card_variant = ""
+            thumb_class = "product-thumb-normal"
+            d_day_class = "d-day-normal"
+            d_day_text = f"D-{remaining}"
+            status_class = "product-status-normal"
+            status_icon = "schedule"
+            status_label = f"{expiry} 까지"
+
         card_html = (
-            f'<div class="{card_class}">'
-            f'<div style="display:flex;justify-content:space-between;align-items:center;">'
-            f'<div>'
-            f'<span style="font-size:1.3rem;font-weight:700;">{name}</span>'
-            f'<span class="{grade_badge}" style="margin-left:8px;">{grade_label}</span>'
-            f'{badge_html}'
+            f'<div class="product-card {card_variant}">'
+            f'<div class="product-thumb {thumb_class}">'
+            f'<span class="material-symbols-outlined" style="font-size:2rem;">{thumb_icon}</span>'
             f'</div>'
-            f'<div style="text-align:right;">'
-            f'<div style="font-size:1.1rem;font-weight:600;">{status_text}</div>'
-            f'<div style="font-size:0.85rem;color:#bbb;">소비기한: {expiry}</div>'
+            f'<div class="product-info">'
+            f'<div class="product-header">'
+            f'<div><span class="product-name">{name}</span>'
+            f'<span class="grade-chip {grade_chip}">{grade_label}</span>'
+            f'{origin_badge}</div>'
+            f'<span class="d-day {d_day_class}">{d_day_text}</span>'
             f'</div>'
-            f'</div>'
-            f'<div style="font-size:0.82rem;color:#aaa;margin-top:4px;">'
-            f'입고: {p.get("intake_date", "-")}{rest_display}'
+            f'<div class="product-status {status_class}">'
+            f'<span class="material-symbols-outlined" style="font-size:1.1rem;">{status_icon}</span> '
+            f'{status_label}</div>'
+            f'<div class="product-meta">입고: {p.get("intake_date", "-")}{rest_display}</div>'
             f'</div>'
             f'</div>'
         )

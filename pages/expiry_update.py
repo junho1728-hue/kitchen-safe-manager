@@ -58,7 +58,7 @@ def _render_action_ui(key_suffix: str, update_action: str) -> str:
 # ═══════════════════════════════════════════
 
 st.markdown("<div style='height:2rem'></div>", unsafe_allow_html=True)
-st.markdown("<p class='page-header'>📷 소비기한 업데이트</p>", unsafe_allow_html=True)
+st.markdown("<p class='page-header'><span class='material-symbols-outlined'>photo_camera</span> 소비기한 업데이트</p>", unsafe_allow_html=True)
 
 if st.button("← 홈으로", key="update_back"):
     st.switch_page(st.session_state["_home_pg"])

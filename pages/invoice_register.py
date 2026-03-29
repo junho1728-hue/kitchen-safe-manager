@@ -66,7 +66,7 @@ def reset_workflow():
 
 
 st.markdown("<div style='height:2rem'></div>", unsafe_allow_html=True)
-st.markdown("<p class='page-header'>📋 식자재 입고 등록</p>", unsafe_allow_html=True)
+st.markdown("<p class='page-header'><span class='material-symbols-outlined'>inventory</span> 식자재 입고 등록</p>", unsafe_allow_html=True)
 
 # 홈/초기화 버튼
 col_back, col_reset = st.columns([1, 1])

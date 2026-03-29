@@ -14,23 +14,31 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+# ── Google Fonts: Lexend + Inter + Material Symbols ──
+st.markdown(
+    '<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">'
+    '<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">',
+    unsafe_allow_html=True,
+)
+
 # ── Global CSS: Luminous Slate 디자인 시스템 ──
 st.markdown(
     """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700&display=swap');
 
 /* 사이드바 완전 숨김 */
 [data-testid="stSidebar"] { display: none !important; }
 [data-testid="stSidebarCollapsedControl"] { display: none !important; }
 
 /* 메인 영역 패딩 */
-.block-container { padding-top: 1rem !important; padding-bottom: 5rem !important; max-width: 640px !important; }
+.block-container { padding-top: 1rem !important; padding-bottom: 6rem !important; max-width: 640px !important; }
 
 /* 전역 폰트 — span 제외 (Streamlit 내부 아이콘 폰트 보호) */
-html, body, [class*="css"], p, label, div {
+html, body, [class*="css"], p, label, div, [data-testid="stMarkdownContainer"] {
     font-family: 'Inter', 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif !important;
     font-feature-settings: "liga" 0, "calt" 0 !important;
+    font-size: 20px !important;
+    line-height: 1.6 !important;
 }
 h1, h2, h3, h4, .page-header {
     font-family: 'Lexend', 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif !important;
@@ -38,6 +46,9 @@ h1, h2, h3, h4, .page-header {
     color: #f8fafc !important;
     font-feature-settings: "liga" 0, "calt" 0 !important;
 }
+h1 { font-size: 36px !important; font-weight: 800 !important; letter-spacing: -0.03em !important; }
+h2 { font-size: 28px !important; font-weight: 700 !important; }
+h3 { font-size: 24px !important; font-weight: 700 !important; }
 
 /* ── 홈 메뉴 카드 버튼 ── */
 .menu-card { margin-bottom: 0.75rem; }
@@ -60,7 +71,7 @@ h1, h2, h3, h4, .page-header {
 .menu-card button p, .menu-card button div p {
     font-family: 'Lexend', 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif !important;
     font-feature-settings: "liga" 0, "calt" 0 !important;
-    font-size: 1.25rem !important;
+    font-size: 24px !important;
     font-weight: 700 !important;
     color: #f8fafc !important;
     text-align: left !important;
@@ -88,7 +99,7 @@ h1, h2, h3, h4, .page-header {
 .settings-card button p, .settings-card button div p {
     font-family: 'Lexend', 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif !important;
     font-feature-settings: "liga" 0, "calt" 0 !important;
-    font-size: 1.05rem !important;
+    font-size: 20px !important;
     font-weight: 600 !important;
     color: #94a3b8 !important;
     text-align: left !important;
@@ -107,23 +118,43 @@ h1, h2, h3, h4, .page-header {
     line-height: 1 !important;
 }
 
-/* 전역 버튼 */
+/* 전역 버튼 — 초대형 */
 .stButton > button {
-    min-height: 52px !important;
+    min-height: 80px !important;
     font-family: 'Inter', 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif !important;
-    font-size: 1rem !important;
+    font-size: 24px !important;
     font-weight: 600 !important;
-    border-radius: 0.75rem !important;
+    border-radius: 16px !important;
+    background-color: #1e293b !important;
+    color: white !important;
+    border: 2px solid #3b82f6 !important;
+}
+.stButton > button:hover {
+    background-color: #263348 !important;
+    border-color: #60a5fa !important;
+}
+/* 강조 텍스트 (날짜, 건수 등) */
+.highlight-text {
+    font-size: 32px !important;
+    font-weight: 900 !important;
+    color: #ef4444 !important;
 }
 
-/* 페이지 헤더 */
+/* 페이지 헤더 — 초대형 */
 .page-header {
     font-family: 'Lexend', 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif !important;
     font-feature-settings: "liga" 0, "calt" 0 !important;
-    font-size: 1.8rem !important;
+    font-size: 28px !important;
     font-weight: 800 !important;
     margin-bottom: 1rem !important;
-    color: #f8fafc !important;
+    color: #3b82f6 !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 0.5rem !important;
+}
+.page-header .material-symbols-outlined {
+    font-size: 32px !important;
+    color: #3b82f6 !important;
 }
 
 /* ── 파일 업로더 ── */
@@ -141,13 +172,13 @@ h1, h2, h3, h4, .page-header {
     background: #1e3a5f !important;
 }
 [data-testid="stFileUploaderDropzoneInstructions"] {
-    font-size: 1.1rem !important;
+    font-size: 20px !important;
     font-weight: 600 !important;
     color: #93c5fd !important;
 }
 [data-testid="stFileUploader"] button {
-    min-height: 52px !important;
-    font-size: 1.1rem !important;
+    min-height: 72px !important;
+    font-size: 22px !important;
     font-weight: 700 !important;
     width: 100% !important;
     margin-top: 8px !important;
@@ -159,16 +190,137 @@ h1, h2, h3, h4, .page-header {
     display: inline-block;
     background: #ef4444;
     color: #fff;
-    font-size: 0.85rem;
+    font-size: 18px;
     font-weight: 700;
-    padding: 3px 10px;
+    padding: 6px 14px;
     border-radius: 999px;
-    animation: pulse 1.5s infinite;
+    animation: badge-pulse 1.5s infinite;
 }
-@keyframes pulse {
+@keyframes badge-pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.65; }
 }
+
+/* ── 앱 전체 배경 ── */
+[data-testid="stAppViewContainer"], .main, .stApp { background-color: #0f172a !important; }
+[data-testid="stHeader"] {
+    background: rgba(15,23,42,0.9) !important;
+    backdrop-filter: blur(24px) !important;
+    -webkit-backdrop-filter: blur(24px) !important;
+    border-bottom: 1px solid rgba(255,255,255,0.05) !important;
+}
+
+/* Material Symbols */
+.material-symbols-outlined {
+    font-family: 'Material Symbols Outlined' !important;
+    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+    vertical-align: middle;
+    font-feature-settings: normal !important;
+    -webkit-font-feature-settings: normal !important;
+    line-height: 1;
+}
+
+/* ── 탭 — 초대형 ── */
+[data-baseweb="tab-list"] { gap: 0.25rem !important; border-bottom: 1px solid rgba(255,255,255,0.05) !important; }
+[data-baseweb="tab"] { color: #94a3b8 !important; font-weight: 700 !important; font-size: 20px !important; border-radius: 0.75rem 0.75rem 0 0 !important; padding: 0.75rem 1rem !important; }
+[data-baseweb="tab"][aria-selected="true"] { color: #3b82f6 !important; background: rgba(59,130,246,0.08) !important; }
+[data-baseweb="tab-highlight"] { background-color: #3b82f6 !important; }
+
+/* ── 입력 필드 — 초대형 ── */
+[data-testid="stTextInput"] input, [data-testid="stTextArea"] textarea {
+    background: #1e293b !important; border: 1px solid rgba(255,255,255,0.05) !important;
+    border-radius: 1rem !important; color: #f8fafc !important;
+    font-size: 20px !important; padding: 0.75rem 1rem !important; min-height: 56px !important;
+}
+[data-testid="stTextInput"] input:focus, [data-testid="stTextArea"] textarea:focus {
+    border-color: #3b82f6 !important; box-shadow: 0 0 0 1px #3b82f6 !important;
+}
+[data-testid="stTextInput"] label, [data-testid="stTextArea"] label, [data-testid="stSelectbox"] label, [data-testid="stDateInput"] label {
+    font-size: 20px !important; font-weight: 600 !important;
+}
+[data-baseweb="select"] > div { background: #1e293b !important; border: 1px solid rgba(255,255,255,0.05) !important; border-radius: 1rem !important; font-size: 20px !important; min-height: 56px !important; }
+[data-baseweb="select"] [data-testid="stMarkdownContainer"] p { font-size: 20px !important; }
+/* 날짜 입력 */
+[data-testid="stDateInput"] input { font-size: 20px !important; min-height: 56px !important; background: #1e293b !important; color: #f8fafc !important; border-radius: 1rem !important; }
+/* 체크박스 */
+[data-testid="stCheckbox"] label span { font-size: 20px !important; }
+[data-testid="stCheckbox"] [data-testid="stWidgetLabel"] p { font-size: 20px !important; }
+
+/* ── 메트릭 카드 ── */
+[data-testid="stMetric"] {
+    background: #334155 !important; border-radius: 1.5rem !important; padding: 1.25rem !important;
+    border: 1px solid rgba(255,255,255,0.05) !important;
+    box-shadow: inset 0 1px 0 0 rgba(255,255,255,0.05) !important;
+}
+
+/* ── 익스팬더 ── */
+[data-testid="stExpander"] {
+    background: #1e293b !important; border: 1px solid rgba(255,255,255,0.05) !important;
+    border-radius: 1rem !important;
+}
+
+/* ── 구분선 ── */
+hr { border-color: rgba(255,255,255,0.05) !important; }
+
+/* ── 요약 카드 그리드 ── */
+.summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0 1.5rem; }
+.summary-card {
+    border-radius: 1.5rem; padding: 1.25rem; display: flex; flex-direction: column;
+    justify-content: space-between; aspect-ratio: 1;
+    border: 1px solid rgba(255,255,255,0.05);
+    box-shadow: inset 0 1px 0 0 rgba(255,255,255,0.05);
+}
+.summary-card .summary-top { display: flex; justify-content: space-between; align-items: flex-start; }
+.summary-card .summary-icon { font-size: 2.5rem; }
+.summary-card .summary-number { font-family: 'Lexend', sans-serif; font-weight: 900; font-size: 32px; }
+.summary-card .summary-label { font-weight: 700; font-size: 20px; line-height: 1.2; margin: 0; }
+.summary-all { background: #334155; }
+.summary-all .summary-icon, .summary-all .summary-number { color: #3b82f6; }
+.summary-all .summary-label { color: #f8fafc; }
+.summary-urgent { background: #991b1b; }
+.summary-urgent .summary-icon, .summary-urgent .summary-number, .summary-urgent .summary-label { color: #fff; }
+.summary-warning { background: #3d4d63; }
+.summary-warning .summary-icon, .summary-warning .summary-number { color: #fbbf24; }
+.summary-warning .summary-label { color: #f8fafc; }
+.summary-expired { background: #ef4444; }
+.summary-expired .summary-icon, .summary-expired .summary-number, .summary-expired .summary-label { color: #fff; }
+
+/* ── 제품 카드 ── */
+.product-card {
+    background: #1e293b; padding: 1.25rem; border-radius: 2rem;
+    border: 1px solid rgba(255,255,255,0.05); display: flex; align-items: center;
+    gap: 1rem; margin-bottom: 0.75rem;
+}
+.product-card-expired { border: 2px solid #ef4444 !important; }
+.product-card-urgent { border: 2px solid #ef4444 !important; }
+.product-card-warning { border: 1px solid rgba(251,191,36,0.3) !important; }
+.product-thumb {
+    width: 4.5rem; height: 4.5rem; border-radius: 1rem;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.product-thumb-expired, .product-thumb-urgent { background: rgba(239,68,68,0.2); color: #ef4444; }
+.product-thumb-warning { background: rgba(251,191,36,0.15); color: #fbbf24; }
+.product-thumb-normal { background: #334155; color: #94a3b8; }
+.product-thumb-noexpiry { background: rgba(59,130,246,0.15); color: #3b82f6; }
+.product-info { flex-grow: 1; min-width: 0; }
+.product-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.2rem; gap: 0.5rem; }
+.product-name { font-family: 'Lexend', sans-serif; font-size: 22px; font-weight: 800; color: #fff; margin: 0; line-height: 1.2; }
+.d-day { font-family: 'Lexend', sans-serif; font-weight: 700; font-size: 22px; flex-shrink: 0; padding: 0.1rem 0.5rem; border-radius: 0.5rem; white-space: nowrap; }
+.d-day-expired { background: #ef4444; color: #fff; }
+.d-day-urgent { color: #ef4444; }
+.d-day-warning { color: #fbbf24; }
+.d-day-normal { color: #699cff; }
+.d-day-noexpiry { color: #3b82f6; }
+.product-status { display: flex; align-items: center; gap: 0.3rem; font-size: 18px; font-weight: 500; }
+.product-status-expired, .product-status-urgent { color: #ef4444; }
+.product-status-warning { color: #fbbf24; }
+.product-status-normal { color: #94a3b8; }
+.product-meta { font-size: 16px; color: #64748b; margin-top: 0.15rem; }
+.grade-chip { display: inline-block; padding: 4px 10px; border-radius: 0.5rem; font-size: 14px; font-weight: 700; margin-left: 0.4rem; vertical-align: middle; }
+.grade-chip-a { background: #d32f2f; color: #fff; }
+.grade-chip-b { background: #f57c00; color: #fff; }
+.grade-chip-c { background: #388e3c; color: #fff; }
+.grade-chip-normal { background: #555; color: #ccc; }
 </style>
 """,
     unsafe_allow_html=True,
@@ -205,10 +357,10 @@ def home_page():
     st.markdown("<div style='height:2rem'></div>", unsafe_allow_html=True)
     st.markdown(
         "<h1 style='font-family:Lexend,Apple Color Emoji,Segoe UI Emoji,sans-serif;"
-        "font-feature-settings:\"liga\" 0,\"calt\" 0;font-weight:900;font-size:2.2rem;"
+        "font-feature-settings:\"liga\" 0,\"calt\" 0;font-weight:900;font-size:36px;"
         "margin-bottom:0.2em;color:#f8fafc;letter-spacing:-0.03em;line-height:1.1;'>"
         "주방 위생 안심 매니저</h1>"
-        "<p style='color:#64748b;font-size:1rem;margin-top:0;margin-bottom:2rem;"
+        "<p style='color:#64748b;font-size:20px;margin-top:0;margin-bottom:2rem;"
         "font-family:Inter,sans-serif;'>소비기한 · 식자재 · 라벨 관리</p>",
         unsafe_allow_html=True,
     )
@@ -322,8 +474,8 @@ def home_page():
             f"<div style='background:#1e3a5f;border:1px solid #3b82f6;border-radius:0.75rem;"
             f"padding:0.75rem 1rem;margin-bottom:1rem;display:flex;align-items:center;"
             f"justify-content:space-between;'>"
-            f"<span style='font-size:0.95rem;'>📦 대기함에 <strong>{staging_count}건</strong> 대기 중</span>"
-            f"<span style='color:#60a5fa;font-size:0.85rem;'>입고 등록 → 대기함 탭</span>"
+            f"<span style='font-size:20px;'>📦 대기함에 <strong>{staging_count}건</strong> 대기 중</span>"
+            f"<span style='color:#60a5fa;font-size:18px;'>입고 등록 → 대기함 탭</span>"
             f"</div>",
             unsafe_allow_html=True,
         )
@@ -389,28 +541,37 @@ components.html("""
 
             // ── 하단 네비바: 부모 document에 직접 삽입 ──
             if (!doc.getElementById('app-bottom-nav')) {
+                if (!doc.getElementById('mat-symbols-link')) {
+                    const lnk = doc.createElement('link');
+                    lnk.id = 'mat-symbols-link';
+                    lnk.rel = 'stylesheet';
+                    lnk.href = 'https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap';
+                    doc.head.appendChild(lnk);
+                }
                 const nav = doc.createElement('nav');
                 nav.id = 'app-bottom-nav';
                 nav.style.cssText = 'position:fixed;bottom:0;left:0;width:100%;z-index:9999;'
-                    + 'background:rgba(15,23,42,0.97);backdrop-filter:blur(20px);'
-                    + '-webkit-backdrop-filter:blur(20px);'
-                    + 'border-top:1px solid rgba(255,255,255,0.08);'
+                    + 'background:rgba(15,23,42,0.95);backdrop-filter:blur(40px);'
+                    + '-webkit-backdrop-filter:blur(40px);'
+                    + 'border-top:1px solid rgba(255,255,255,0.05);'
+                    + 'border-radius:1rem 1rem 0 0;'
+                    + 'box-shadow:0 -4px 24px rgba(0,0,0,0.3);'
                     + 'display:flex;justify-content:space-around;align-items:center;'
-                    + 'padding:0.6rem 0 calc(0.8rem + env(safe-area-inset-bottom));';
+                    + 'padding:0.5rem 1rem calc(0.8rem + env(safe-area-inset-bottom));height:5rem;';
                 const items = [
-                    {icon:'🏠', label:'홈',     href:'/'},
-                    {icon:'⏱️', label:'소비기한', href:'/?nav=expiry'},
-                    {icon:'📋', label:'입고',    href:'/?nav=register'},
-                    {icon:'📦', label:'발주',    href:'/?nav=preorder'},
-                    {icon:'⚙️', label:'설정',    href:'/?nav=settings'},
+                    {icon:'home', label:'홈',     href:'/'},
+                    {icon:'hourglass_bottom', label:'소비기한', href:'/?nav=expiry'},
+                    {icon:'inventory', label:'입고',    href:'/?nav=register'},
+                    {icon:'shopping_cart', label:'발주',    href:'/?nav=preorder'},
+                    {icon:'settings', label:'설정',    href:'/?nav=settings'},
                 ];
                 items.forEach(item => {
                     const a = doc.createElement('div');
                     a.style.cssText = 'display:flex;flex-direction:column;align-items:center;'
-                        + 'color:#94a3b8;font-size:0.65rem;font-weight:600;gap:3px;cursor:pointer;'
+                        + 'color:#94a3b8;font-size:14px;font-weight:600;gap:3px;cursor:pointer;'
                         + 'font-family:Lexend,sans-serif;user-select:none;';
                     if (item.href === '/') a.style.color = '#3b82f6';
-                    a.innerHTML = '<span style="font-size:1.5rem;">' + item.icon + '</span>' + item.label;
+                    a.innerHTML = '<span class="material-symbols-outlined" style="font-size:1.75rem;">' + item.icon + '</span>' + item.label;
                     a.setAttribute('data-href', item.href);
                     a.setAttribute('onclick', 'window.location.href=this.getAttribute("data-href")');
                     nav.appendChild(a);
