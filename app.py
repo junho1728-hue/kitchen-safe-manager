@@ -118,11 +118,11 @@ h3 { font-size: 24px !important; font-weight: 700 !important; }
     line-height: 1 !important;
 }
 
-/* 전역 버튼 — 초대형 */
+/* 전역 버튼 — 기본 크기 */
 .stButton > button {
-    min-height: 80px !important;
+    min-height: 60px !important;
     font-family: 'Inter', 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif !important;
-    font-size: 24px !important;
+    font-size: 20px !important;
     font-weight: 600 !important;
     border-radius: 16px !important;
     background-color: #1e293b !important;
@@ -132,6 +132,30 @@ h3 { font-size: 24px !important; font-weight: 700 !important; }
 .stButton > button:hover {
     background-color: #263348 !important;
     border-color: #60a5fa !important;
+}
+
+/* 메인 메뉴 카드 버튼만 80px 대형 */
+.menu-card button {
+    min-height: 90px !important;
+    font-size: 24px !important;
+}
+
+/* 뒤로가기/작은 유틸리티 버튼 — 미니 */
+.mini-btn button, [data-testid="stButton"]:has(button[kind="secondary"]) button {
+    min-height: 48px !important;
+    font-size: 17px !important;
+    border: 1px solid rgba(255,255,255,0.1) !important;
+    background-color: rgba(30,41,59,0.6) !important;
+    color: #94a3b8 !important;
+    border-radius: 12px !important;
+    padding: 0 1.2rem !important;
+}
+
+/* 코너 칩 전용 — 작은 알약형 */
+.corner-chip button {
+    min-height: 48px !important;
+    font-size: 17px !important;
+    border-radius: 9999px !important;
 }
 /* 강조 텍스트 (날짜, 건수 등) */
 .highlight-text {
@@ -527,6 +551,7 @@ components.html("""
 
             // ── 홈 메뉴 버튼에 카드 CSS 클래스 부여 ──
             const menuLabels = ['소비기한 관리', '식자재 입고 등록', '소비기한 업데이트', '발주표 미리 등록'];
+            const miniLabels = ['홈으로', '뒤로', '← 홈', '확인', '취소'];
             doc.querySelectorAll('[data-testid="stButton"]').forEach(el => {
                 const btn = el.querySelector('button');
                 if (!btn) return;
@@ -536,6 +561,20 @@ components.html("""
                 }
                 if (txt.includes('설정') && !txt.includes('관리') && !el.classList.contains('settings-card')) {
                     el.classList.add('settings-card');
+                }
+                // 뒤로가기/작은 유틸 버튼
+                if (miniLabels.some(l => txt.includes(l)) && !el.classList.contains('mini-btn')) {
+                    el.classList.add('mini-btn');
+                }
+                // 코너 칩 버튼 (짧은 텍스트이면서 메뉴 레이블 아닌 것)
+                if (txt.trim().length > 0 && txt.trim().length <= 10 &&
+                    !menuLabels.some(l => txt.includes(l)) &&
+                    !txt.includes('설정') && !txt.includes('홈으로') &&
+                    !txt.includes('저장') && !txt.includes('업데이트') &&
+                    !txt.includes('등록') && !txt.includes('분석') &&
+                    el.closest('[data-testid="column"]') &&
+                    !el.classList.contains('corner-chip')) {
+                    el.classList.add('corner-chip');
                 }
             });
 
