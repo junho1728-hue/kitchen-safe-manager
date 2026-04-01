@@ -111,9 +111,14 @@ with tab_new:
         if not settings.get("api_key"):
             st.error("⚠️ API Key가 설정되지 않았습니다. 설정 페이지에서 먼저 입력하세요.")
         else:
-            photo = st.camera_input("발주서/명세서 촬영", key="pre_invoice_camera")
+            photo = st.file_uploader(
+                "📷 발주서/명세서 사진 찍기 / 업로드",
+                type=["jpg", "jpeg", "png", "heic", "webp"],
+                key="pre_invoice_camera",
+                help="순정 카메라 앱 또는 사진첩에서 선택",
+            )
             if photo is not None:
-                image_bytes = photo.getvalue()
+                image_bytes = photo.read()
                 with st.spinner("AI가 품목을 추출 중..."):
                     try:
                         items = extract_invoice_items(
